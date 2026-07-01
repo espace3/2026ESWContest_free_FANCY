@@ -7,3 +7,4 @@ venv/
 *.tflite
 *.pt
 *.jpg
+.python_version/

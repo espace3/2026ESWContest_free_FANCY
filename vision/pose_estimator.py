@@ -81,6 +81,12 @@ class MoveNetMultiPoseDetector:
             model_path=model_path,
             num_threads=3
         )
+        # MultiPose Lightning은 입력 크기가 동적이라, allocate 전에 반드시
+        # 실제로 쓸 크기로 resize를 먼저 해줘야 한다. 안 하면 모델에 잡혀있는
+        # 임시 크기(보통 1)로 텐서가 할당돼서 "got 256 but expected 1" 같은
+        # shape mismatch 에러가 난다.
+        input_index = self._interp.get_input_details()[0]['index']
+        self._interp.resize_tensor_input(input_index, [1, self.INPUT_SIZE, self.INPUT_SIZE, 3])
         self._interp.allocate_tensors()
         self._inp = self._interp.get_input_details()[0]
         self._out = self._interp.get_output_details()[0]

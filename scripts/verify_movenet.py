@@ -35,7 +35,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
-from vision.target_selector import select_target
+from vision.target_selector import select_target, person_center
 from vision.pose_tracker import PoseTracker
 
 # ── 색상 ─────────────────────────────────────────────────────────────────────
@@ -444,6 +444,7 @@ def main():
     t_prev = time.time()
     last_log = time.time()
     snap_n = 0
+    prev_center: tuple[float, float] | None = None  # 직전에 선정됐던 대상자의 위치 (히스테리시스용)
     empty_regions = {k: {"cx": 0.5, "cy": 0.5, "visible": False}
                       for k in ("head", "upper", "lower")}
 
@@ -466,11 +467,16 @@ def main():
         result = detector.infer(frame)          # {"detected": bool, "people": [...]}
         people = result["people"]
 
-        # 다중 인원 중 추적 대상 1인 선정 (bbox 면적 최대)
-        target_idx = select_target([p["keypoints"] for p in people], conf_thr=args.conf) if people else None
+        # 다중 인원 중 추적 대상 1인 선정 (bbox 면적 최대, 단 직전 대상자와 면적이
+        # 비슷하면 갈아타지 않고 유지 — 히스테리시스)
+        target_idx = (
+            select_target([p["keypoints"] for p in people], conf_thr=args.conf, prev_center=prev_center)
+            if people else None
+        )
 
         if target_idx is not None:
             tracker_input = {"detected": True, "regions": people[target_idx]["regions"]}
+            prev_center = person_center(people[target_idx]["keypoints"], conf_thr=args.conf)
         else:
             tracker_input = {"detected": False, "regions": empty_regions}
         smoothed = tracker.update(tracker_input)

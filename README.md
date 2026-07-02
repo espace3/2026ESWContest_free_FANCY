@@ -19,7 +19,7 @@
 vision/              # 순수 계산 모듈 (하드웨어 의존성 없음)
   pose_estimator.py    # MoveNetMultiPoseDetector: 프레임 → 검출된 모든 사람의 키포인트/부위(머리·상체·하체) 중심 좌표
   pose_tracker.py       # PoseTracker: 선정된 대상자 부위 중심 좌표 EMA 스무딩
-  target_selector.py    # 다중 인원 중 bbox 면적 최대 1인 선정
+  target_selector.py    # 다중 인원 중 bbox 면적 최대 1인 선정 (면적 비슷하면 기존 대상자 유지하는 히스테리시스 포함)
 control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
   control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 풍속 단계 매핑
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)

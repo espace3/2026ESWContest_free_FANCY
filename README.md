@@ -60,8 +60,10 @@ python scripts/verify_movenet.py --rpicam                           # rpicam-vid
   지금은 `vision/pose_estimator.py`, `vision/target_selector.py`, `vision/pose_tracker.py`,
   `control/control_signal_generator.py`가 이 원칙을 따릅니다.
 - **하드웨어 호출 전용 모듈** (계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만 함):
-  릴레이 제어, 모터 제어, BLE 서버. (아직 미구현, `hardware/` 패키지로 추가 예정)
-- 예: `compute_pan_angle(keypoints) -> float`처럼 순수 함수로 각도를 계산하고,
+  릴레이 제어, 모터 제어, BLE 서버. `hardware/motor_controller.py`는 아직 배선/드라이버가
+  정해지지 않아 인터페이스만 있는 STUB 상태입니다 (실제 GPIO 코드는 하드웨어 스펙이
+  정해진 뒤에 채울 것).
+- 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`처럼 순수 함수로 각도를 계산하고,
   `motor_controller.move_to(angle)`이 실제 GPIO 호출을 전담합니다. 이렇게 분리해두면
   모터 드라이버를 바꾸거나 계산 버그를 찾을 때 서로 영향 없이 수정·검증할 수 있습니다.
 
@@ -73,6 +75,8 @@ python scripts/verify_movenet.py --rpicam                           # rpicam-vid
 
 ## 성능 목표
 
+- 추론 FPS: 목표 20fps (팀 목표치, 추후 변경 가능) — 모델을 바꾸면(예: 싱글포즈 → 멀티포즈)
+  반드시 다시 측정할 것. 한 모델에서 잰 수치가 다른 모델에도 그대로 적용되는 건 아님
 - 전체 시스템 응답 시간 < 0.5s
 - 객체 인식 mAP ≥ 66%
 - 부위 전환 정확도 ≥ 90%

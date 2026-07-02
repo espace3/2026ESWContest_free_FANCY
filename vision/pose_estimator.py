@@ -49,12 +49,11 @@ class MoveNetMultiPoseDetector:
     한 프레임에서 최대 MAX_PEOPLE명까지 키포인트를 동시에 뽑아 반환한다.
     """
 
-    # MultiPose Lightning 기본 입력 크기 (32의 배수). 받은 .tflite 파일의 실제
-    # 입력 shape이 다르면 이 값을 맞춰서 바꿀 것 — 아래 명령으로 확인 가능:
-    #   python3 -c "from tflite_runtime.interpreter import Interpreter; \
-    #   i = Interpreter(model_path='multipose_lightning.tflite'); i.allocate_tensors(); \
-    #   print(i.get_input_details()[0]['shape'])"
-    INPUT_SIZE = 256
+    # MultiPose Lightning 공식 기본 입력 크기는 256(32의 배수)이지만, Pi 5 FPS
+    # 목표(20fps)를 맞추기 위해 192로 낮춰서 사용 중 — 완전 컨볼루션 구조라
+    # 32의 배수면 동작은 하지만, 256 기준으로 학습된 모델이라 특히 작게 잡히는
+    # 사람/먼 거리 키포인트 정확도가 떨어질 수 있음. mAP 재측정 필요.
+    INPUT_SIZE = 192
     MAX_PEOPLE = 6
 
     # 출력 텐서 한 사람당 56개 값 중: [0:51]=키포인트17*(y,x,score), [51:55]=bbox(ymin,xmin,ymax,xmax), [55]=인물 전체 점수

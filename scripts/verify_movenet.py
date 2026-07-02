@@ -256,48 +256,64 @@ class _ThreadedHTTP(ThreadingMixIn, server.HTTPServer):
 
 
 class _RpicamVidCamera:
-    """rpicam-vid 서브프로세스로 YUV420 raw 프레임을 받아오는 백엔드.
+    """rpicam-vid 서브프로세스로 MJPEG 프레임을 받아오는 백엔드.
 
     picamera2(libcamera 파이썬 바인딩) 없이도, 검증된 rpicam-vid 바이너리를
     통해 카메라를 사용할 수 있게 해줌. 파이썬 버전/ABI 충돌과 무관하게 동작.
+
+    raw yuv420 대신 MJPEG을 쓰는 이유: libcamera 계열 raw 출력은 실제 프레임에
+    stride 정렬 패딩이 붙는 경우가 있어서, width*height*1.5바이트를 "한 프레임"
+    이라고 가정하고 잘라 읽으면 프레임 경계가 밀려 화면이 찢어져 보이는(티어링)
+    문제가 생긴다. MJPEG은 프레임마다 SOI(FFD8)~EOI(FFD9) 마커로 경계가 스스로
+    표시되어 있어서 이런 크기 계산이 아예 필요 없다.
     """
+
+    _SOI = b"\xff\xd8"
+    _EOI = b"\xff\xd9"
+    _MAX_BUF = 2_000_000  # 마커를 못 찾고 버퍼가 무한히 쌓이는 것 방지
 
     def __init__(self, width: int, height: int, fps: int = 30) -> None:
         import subprocess
         self.width = width
         self.height = height
-        # YUV420(I420) 기준 프레임 크기: width*height*1.5 바이트
-        self.frame_size = width * height * 3 // 2
         cmd = [
             "rpicam-vid",
             "-t", "0",                       # 무제한 실행
             "--width", str(width),
             "--height", str(height),
             "--framerate", str(fps),
-            "--codec", "yuv420",
+            "--codec", "mjpeg",
             "-o", "-",                        # stdout으로 출력
             "-n",                             # 미리보기 창 비활성화
             "--flush",                        # 버퍼링 최소화 (지연 감소)
         ]
         self.proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            bufsize=self.frame_size * 2,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
         )
-        print(f"[camera] rpicam-vid ({width}x{height}@{fps}fps, pid={self.proc.pid})")
+        self._buf = bytearray()
+        print(f"[camera] rpicam-vid MJPEG ({width}x{height}@{fps}fps, pid={self.proc.pid})")
 
-    def read_raw(self) -> bytes | None:
-        """정확히 한 프레임 분량의 바이트를 읽음. 프로세스 종료/에러 시 None."""
+    def read_jpeg(self) -> bytes | None:
+        """스트림에서 완결된 JPEG 프레임(SOI~EOI) 하나를 찾아 반환. 프로세스 종료/에러 시 None."""
         if self.proc.poll() is not None:
             return None
-        buf = bytearray()
-        need = self.frame_size
-        while need > 0:
-            chunk = self.proc.stdout.read(need)
-            if not chunk:  # 파이프 종료
-                return None
-            buf.extend(chunk)
-            need -= len(chunk)
-        return bytes(buf)
+        while True:
+            end = self._buf.find(self._EOI)
+            if end == -1:
+                chunk = self.proc.stdout.read(4096)
+                if not chunk:  # 파이프 종료
+                    return None
+                self._buf.extend(chunk)
+                if len(self._buf) > self._MAX_BUF:
+                    self._buf.clear()
+                continue
+            start = self._buf.find(self._SOI)
+            if start == -1 or start > end:
+                del self._buf[: end + 2]
+                continue
+            jpg = bytes(self._buf[start:end + 2])
+            del self._buf[: end + 2]
+            return jpg
 
     def stop(self) -> None:
         if self.proc.poll() is None:
@@ -348,12 +364,11 @@ def _read_frame(cam, backend):
     if backend == "picamera2":
         return cv2.cvtColor(cam.capture_array(), cv2.COLOR_RGB2BGR)
     if backend == "rpicam":
-        raw = cam.read_raw()
-        if raw is None:
+        jpg = cam.read_jpeg()
+        if jpg is None:
             return None
-        yuv = np.frombuffer(raw, dtype=np.uint8).reshape(
-            (cam.height * 3 // 2, cam.width))
-        return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
+        arr = np.frombuffer(jpg, dtype=np.uint8)
+        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
     ret, frame = cam.read()
     return frame if ret else None
 

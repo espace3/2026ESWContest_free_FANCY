@@ -34,6 +34,24 @@ def clamp_angle(angle_deg: float, min_deg: float, max_deg: float) -> float:
     return max(min_deg, min(max_deg, angle_deg))
 
 
+def apply_deadzone(new_angle_deg: float, last_sent_angle_deg: float, deadzone_deg: float) -> float:
+    """새로 계산된 각도와 '마지막으로 모터에 실제 전송한' 각도의 차이가
+    deadzone_deg 이하면 이전 값을 그대로 반환해 모터를 움직이지 않게 한다.
+
+    포즈 추정 잡음으로 목표 지점이 미세하게 계속 흔들려도(사람은 정지 상태),
+    이 함수를 거친 뒤의 값을 모터에 보내면 오차가 임계값을 넘을 때만 실제로
+    움직인다. PoseTracker의 EMA는 좌표 추정 자체를 부드럽게 만드는 역할이고,
+    이 데드존은 '그 부드러운 값도 여전히 미세하게 흔들릴 때 모터까지 그 흔들림이
+    전달되지 않게' 마지막 단계에서 한 번 더 걸러주는 역할이다.
+
+    주의: 상태(마지막 전송 각도)는 호출하는 쪽(예: 메인 루프)이 들고 있다가
+    매번 넘겨줘야 한다 — 이 모듈은 순수 함수만 두고 상태를 갖지 않는다.
+    """
+    if abs(new_angle_deg - last_sent_angle_deg) <= deadzone_deg:
+        return last_sent_angle_deg
+    return new_angle_deg
+
+
 def estimate_distance_m(
     shoulder_px_dist: float,
     ref_shoulder_cm: float,

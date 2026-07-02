@@ -10,17 +10,18 @@
 
 - 보드: Raspberry Pi 5 + Pi Camera Module 3
 - OS/언어: Raspberry Pi OS Lite 64-bit, Python 3.11.15
-- 추론: TFLite Runtime, MoveNet Lightning (192x192, 17 keypoints)
+- 추론: TFLite Runtime, MoveNet MultiPose Lightning (256x256, 17 keypoints, 최대 6명 동시 검출)
 - 영상: OpenCV 4.x / BLE: BlueZ 5.x GATT 서버 / 앱: Flutter(Dart)
 
 ## 구조
 
 ```
 vision/              # 순수 계산 모듈 (하드웨어 의존성 없음)
-  pose_estimator.py    # MoveNetDetector: 프레임 → 키포인트 / 부위(머리·상체·하체) 중심 좌표
-  pose_tracker.py       # PoseTracker: 부위 중심 좌표 EMA 스무딩
+  pose_estimator.py    # MoveNetMultiPoseDetector: 프레임 → 검출된 모든 사람의 키포인트/부위(머리·상체·하체) 중심 좌표
+  pose_tracker.py       # PoseTracker: 선정된 대상자 부위 중심 좌표 EMA 스무딩
+  target_selector.py    # 다중 인원 중 bbox 면적 최대 1인 선정
 control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
-  control_signal_generator.py  # 좌표→각도 변환, 거리 추정, 풍속 단계 매핑
+  control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 풍속 단계 매핑
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
   motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 아직 인터페이스만 정의된 STUB
 scripts/             # 단계별 수동 검증 스크립트
@@ -39,7 +40,7 @@ python scripts/verify_movenet.py --opencv --cam 0                   # OpenCV/V4L
 python scripts/verify_movenet.py --rpicam                           # rpicam-vid 서브프로세스로 캡처 (picamera2 미설치 시)
 ```
 
-레포 루트에서 실행하세요. `movenet_lightning.tflite` 모델 파일이 레포 루트에 있어야 합니다 (레포에는 포함되어 있지 않음, 별도 다운로드 필요).
+레포 루트에서 실행하세요. `multipose_lightning.tflite` 모델 파일이 레포 루트에 있어야 합니다 (레포에는 포함되어 있지 않음, [Kaggle Models](https://www.kaggle.com/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1)에서 별도 다운로드 필요).
 
 ## 개발 단계
 
@@ -56,7 +57,8 @@ python scripts/verify_movenet.py --rpicam                           # rpicam-vid
 
 - **계산 전용 모듈** (GPIO/BlueZ 등 하드웨어 라이브러리 import 금지, 입력은 프레임/키포인트,
   출력은 각도·신호값 등 순수 데이터): 포즈 추정, 부위 판별, 대상자 선정, 제어 신호 생성.
-  지금은 `vision/pose_estimator.py`, `vision/pose_tracker.py`가 이 원칙을 따릅니다.
+  지금은 `vision/pose_estimator.py`, `vision/target_selector.py`, `vision/pose_tracker.py`,
+  `control/control_signal_generator.py`가 이 원칙을 따릅니다.
 - **하드웨어 호출 전용 모듈** (계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만 함):
   릴레이 제어, 모터 제어, BLE 서버. (아직 미구현, `hardware/` 패키지로 추가 예정)
 - 예: `compute_pan_angle(keypoints) -> float`처럼 순수 함수로 각도를 계산하고,

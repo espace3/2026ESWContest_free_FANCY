@@ -1,15 +1,16 @@
 """
-scripts/verify_movenet.py - MoveNet Lightning 포즈 감지 확인용 스크립트
+scripts/verify_movenet.py - MoveNet MultiPose Lightning 포즈 감지 확인용 스크립트
 
-이 파일은 계산 로직을 포함하지 않습니다. 실제 추정/추적 로직은
-vision/pose_estimator.py, vision/pose_tracker.py에 있고, 여기서는
-카메라를 열어 그 결과를 화면/웹에 보여주기만 합니다 (하드웨어 캡처 + 시각화).
-같은 vision 모듈을 app/main.py(실제 구동 코드)에서도 그대로 가져다 씁니다.
+이 파일은 계산 로직을 포함하지 않습니다. 실제 추정/선정/추적 로직은
+vision/pose_estimator.py, vision/target_selector.py, vision/pose_tracker.py에
+있고, 여기서는 카메라를 열어 그 결과를 화면/웹에 보여주기만 합니다
+(하드웨어 캡처 + 시각화). 같은 vision 모듈을 app/main.py(실제 구동 코드)에서도
+그대로 가져다 씁니다.
 
 설치:
     pip install tflite-runtime
 
-모델: movenet_lightning.tflite (4.6MB, 192x192 입력)
+모델: multipose_lightning.tflite (MoveNet MultiPose Lightning, 최대 6명 동시 검출)
 
 실행 (레포 루트에서):
     python scripts/verify_movenet.py
@@ -32,7 +33,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
-from vision.pose_estimator import MoveNetDetector, KP_NAMES, SKELETON
+from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
+from vision.target_selector import select_target
 from vision.pose_tracker import PoseTracker
 
 # ── 색상 ─────────────────────────────────────────────────────────────────────
@@ -51,44 +53,52 @@ REGION_LABEL = {"head": "HEAD", "upper": "UPPER", "lower": "LOWER"}
 
 # ── 시각화 ───────────────────────────────────────────────────────────────────
 
-def draw_pose(frame: np.ndarray, result: dict) -> np.ndarray:
-    """키포인트 + 골격 + 영역 중심을 프레임에 그립니다."""
-    if not result["detected"]:
+def draw_pose(frame: np.ndarray, people: list[dict], selected_idx: int | None) -> np.ndarray:
+    """검출된 모든 사람의 키포인트+골격을 그리고, 선정된 대상자만 부위 중심까지 강조한다."""
+    if not people:
         return frame
 
     vis = frame.copy()
     h, w = vis.shape[:2]
-    kps = result["keypoints"]
     conf_thr = 0.2  # 그리기 임계값은 조금 낮게
 
-    # 골격 선
-    for a, b in SKELETON:
-        if kps[a]["conf"] >= conf_thr and kps[b]["conf"] >= conf_thr:
-            ax, ay = int(kps[a]["x"] * w), int(kps[a]["y"] * h)
-            bx, by = int(kps[b]["x"] * w), int(kps[b]["y"] * h)
-            cv2.line(vis, (ax, ay), (bx, by), C_GRAY, 2)
+    for idx, person in enumerate(people):
+        kps = person["keypoints"]
+        is_target = (idx == selected_idx)
+        line_color = C_GREEN if is_target else C_GRAY
+        line_thick = 3 if is_target else 1
+        pt_color = C_YELLOW if is_target else C_GRAY
+        pt_radius = 4 if is_target else 3
 
-    # 키포인트 점
-    for kp in kps:
-        if kp["conf"] >= conf_thr:
-            cx, cy = int(kp["x"] * w), int(kp["y"] * h)
-            cv2.circle(vis, (cx, cy), 4, C_YELLOW, -1)
+        for a, b in SKELETON:
+            if kps[a]["conf"] >= conf_thr and kps[b]["conf"] >= conf_thr:
+                ax, ay = int(kps[a]["x"] * w), int(kps[a]["y"] * h)
+                bx, by = int(kps[b]["x"] * w), int(kps[b]["y"] * h)
+                cv2.line(vis, (ax, ay), (bx, by), line_color, line_thick)
 
-    # 영역 중심
-    for name, color in REGION_COLOR.items():
-        r = result["regions"][name]
-        if r["visible"]:
-            cx = int(r["cx"] * w)
-            cy = int(r["cy"] * h)
-            cv2.circle(vis, (cx, cy), 12, color, -1)
-            cv2.circle(vis, (cx, cy), 12, C_WHITE, 2)
-            cv2.putText(vis, REGION_LABEL[name], (cx + 14, cy + 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+        for kp in kps:
+            if kp["conf"] >= conf_thr:
+                cx, cy = int(kp["x"] * w), int(kp["y"] * h)
+                cv2.circle(vis, (cx, cy), pt_radius, pt_color, -1)
+
+        # 부위(머리/상체/하체) 중심 표시는 실제 추적 대상 1인에게만
+        if is_target:
+            for name, color in REGION_COLOR.items():
+                r = person["regions"][name]
+                if r["visible"]:
+                    cx = int(r["cx"] * w)
+                    cy = int(r["cy"] * h)
+                    cv2.circle(vis, (cx, cy), 12, color, -1)
+                    cv2.circle(vis, (cx, cy), 12, C_WHITE, 2)
+                    cv2.putText(vis, REGION_LABEL[name], (cx + 14, cy + 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
     return vis
 
 
-def build_panel(result: dict, fps: float, frame_ms: float) -> np.ndarray:
+def build_panel(
+    people: list[dict], selected_idx: int | None, fps: float, frame_ms: float
+) -> np.ndarray:
     h_panel = CFG["camera"]["height"]
     panel = np.full((h_panel, _PANEL_W, 3), C_PANEL, dtype=np.uint8)
 
@@ -99,26 +109,33 @@ def build_panel(result: dict, fps: float, frame_ms: float) -> np.ndarray:
         cv2.line(panel, (5, row), (_PANEL_W - 5, row), C_GRAY, 1)
 
     row = 28
-    text("== MOVENET LIGHTNING ==", row, C_YELLOW, 0.6, 2)
+    text("== MOVENET MULTIPOSE ==", row, C_YELLOW, 0.6, 2)
     row += 28; sep(row); row += 18
     text(f"FPS : {fps:5.1f}    frame: {frame_ms:.0f} ms", row, C_CYAN)
     row += 28; sep(row); row += 18
 
-    detected = result["detected"]
-    text(f"person : {'DETECTED' if detected else 'NOT FOUND'}",
-         row, C_GREEN if detected else C_GRAY, 0.6, 2)
+    n = len(people)
+    text(f"people : {n}    target : {selected_idx if selected_idx is not None else 'NONE'}",
+         row, C_GREEN if n > 0 else C_GRAY, 0.6, 2)
     row += 28; sep(row); row += 18
 
-    kps = result["keypoints"]
-    for i, name in enumerate(KP_NAMES):
-        kp = kps[i]
-        conf = kp["conf"]
-        bar = "#" * int(conf * 10)
-        color = C_GREEN if conf >= 0.3 else (C_YELLOW if conf >= 0.15 else C_GRAY)
-        text(f"{name:<12} {conf:.2f} {bar}", row, color, 0.42)
-        row += 17
-        if row > h_panel - 30:
-            break
+    if selected_idx is not None:
+        kps = people[selected_idx]["keypoints"]
+        score = people[selected_idx]["score"]
+        text(f"target score: {score:.2f}", row, C_CYAN, 0.5)
+        row += 22
+        for i, name in enumerate(KP_NAMES):
+            kp = kps[i]
+            conf = kp["conf"]
+            bar = "#" * int(conf * 10)
+            color = C_GREEN if conf >= 0.3 else (C_YELLOW if conf >= 0.15 else C_GRAY)
+            text(f"{name:<12} {conf:.2f} {bar}", row, color, 0.42)
+            row += 17
+            if row > h_panel - 30:
+                break
+    else:
+        text("(대상자 없음)", row, C_GRAY, 0.5)
+        row += 22
 
     row += 6; sep(row); row += 16
     text("q:종료  s:스크린샷", row, C_GRAY, 0.45)
@@ -353,8 +370,8 @@ def _release_camera(cam, backend):
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="MoveNet Lightning 포즈 확인용 스크립트")
-    parser.add_argument("--model", default="movenet_lightning.tflite")
+    parser = argparse.ArgumentParser(description="MoveNet MultiPose Lightning 포즈 확인용 스크립트")
+    parser.add_argument("--model", default="multipose_lightning.tflite")
     parser.add_argument("--conf", type=float, default=0.25,
                         help="키포인트 신뢰도 임계값 (기본 0.25)")
     parser.add_argument("--opencv", action="store_true")
@@ -375,7 +392,7 @@ def main():
         print(f"[ERROR] 모델 없음: {args.model}")
         sys.exit(1)
 
-    detector = MoveNetDetector(args.model, conf_thr=args.conf)
+    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf)
     cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
 
     web_srv = web_state = None
@@ -389,9 +406,8 @@ def main():
     t_prev = time.time()
     last_log = time.time()
     snap_n = 0
-    result = {"detected": False, "keypoints": [{"x": 0, "y": 0, "conf": 0}] * 17,
-              "regions": {k: {"cx": 0.5, "cy": 0.5, "visible": False}
-                          for k in ("head", "upper", "lower")}}
+    empty_regions = {k: {"cx": 0.5, "cy": 0.5, "visible": False}
+                      for k in ("head", "upper", "lower")}
 
     print("\n[verify_movenet] 시작! 키: q=종료 s=스크린샷\n")
 
@@ -409,9 +425,19 @@ def main():
             time.sleep(0.05)
             continue
 
-        result = detector.infer(frame)
-        smoothed = tracker.update(result)
-        vis = draw_pose(frame, result)
+        result = detector.infer(frame)          # {"detected": bool, "people": [...]}
+        people = result["people"]
+
+        # 다중 인원 중 추적 대상 1인 선정 (bbox 면적 최대)
+        target_idx = select_target([p["keypoints"] for p in people], conf_thr=args.conf) if people else None
+
+        if target_idx is not None:
+            tracker_input = {"detected": True, "regions": people[target_idx]["regions"]}
+        else:
+            tracker_input = {"detected": False, "regions": empty_regions}
+        smoothed = tracker.update(tracker_input)
+
+        vis = draw_pose(frame, people, target_idx)
 
         # 스무딩 결과 추가로 그리기 (흰 테두리 대신 파란 테두리로 구분)
         h, w = vis.shape[:2]
@@ -427,17 +453,17 @@ def main():
         fps = sum(fps_hist) / len(fps_hist)
         frame_ms = dt * 1000
 
-        panel = build_panel(result, fps, frame_ms)
+        panel = build_panel(people, target_idx, fps, frame_ms)
         display = np.hstack([vis, panel])
         cv2.putText(display, f"FPS {fps:.1f}", (10, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, C_CYAN, 2)
 
         # 콘솔 로그
         if time.time() - last_log >= 1.0:
-            r = result["regions"]
+            r = people[target_idx]["regions"] if target_idx is not None else empty_regions
             print(
                 f"\r[{time.strftime('%H:%M:%S')}] "
-                f"{'DETECTED' if result['detected'] else 'not found':12s}  "
+                f"people={len(people)}  target={target_idx if target_idx is not None else '-':<4}  "
                 f"H={'O' if r['head']['visible'] else 'X'} "
                 f"U={'O' if r['upper']['visible'] else 'X'} "
                 f"L={'O' if r['lower']['visible'] else 'X'}  "

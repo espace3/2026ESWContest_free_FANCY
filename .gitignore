@@ -8,3 +8,4 @@ venv/
 *.pt
 *.jpg
 .python_version/
+CLAUDE.md

@@ -21,6 +21,7 @@ vision/pose_estimator.py, vision/target_selector.py, vision/pose_tracker.py에
 from __future__ import annotations
 
 import argparse
+import select
 import sys
 import threading
 import time
@@ -283,6 +284,7 @@ class _RpicamVidCamera:
             "--height", str(height),
             "--framerate", str(fps),
             "--codec", "mjpeg",
+            "--quality", "90",                # JPEG 압축 손실 최소화 (인식 정확도 영향 줄이기)
             "-o", "-",                        # stdout으로 출력
             "-n",                             # 미리보기 창 비활성화
             "--flush",                        # 버퍼링 최소화 (지연 감소)
@@ -294,26 +296,47 @@ class _RpicamVidCamera:
         print(f"[camera] rpicam-vid MJPEG ({width}x{height}@{fps}fps, pid={self.proc.pid})")
 
     def read_jpeg(self) -> bytes | None:
-        """스트림에서 완결된 JPEG 프레임(SOI~EOI) 하나를 찾아 반환. 프로세스 종료/에러 시 None."""
+        """스트림에서 가장 최신의 완결된 JPEG 프레임(SOI~EOI)을 찾아 반환한다.
+
+        처리(추론)가 카메라 출력 속도보다 느리면 파이프에 프레임이 여러 개
+        밀려 쌓일 수 있다. 오래된 프레임부터 순서대로 꺼내면 지연이 계속
+        누적되므로, 파이프에 남은 데이터를 먼저 논블로킹으로 다 긁어온 뒤
+        가장 마지막(최신) 프레임만 반환하고 그 이전 것들은 버린다.
+        프로세스 종료/에러 시 None.
+        """
         if self.proc.poll() is not None:
             return None
+
+        fd = self.proc.stdout.fileno()
         while True:
-            end = self._buf.find(self._EOI)
-            if end == -1:
-                chunk = self.proc.stdout.read(4096)
-                if not chunk:  # 파이프 종료
+            # 파이프에 이미 도착해 있는 데이터를 논블로킹으로 최대한 끌어온다
+            # (처리 지연으로 밀려 쌓인 프레임을 한 번에 파악하기 위함)
+            while select.select([fd], [], [], 0)[0]:
+                chunk = self.proc.stdout.read(65536)
+                if not chunk:
                     return None
                 self._buf.extend(chunk)
                 if len(self._buf) > self._MAX_BUF:
                     self._buf.clear()
-                continue
-            start = self._buf.find(self._SOI)
-            if start == -1 or start > end:
-                del self._buf[: end + 2]
-                continue
-            jpg = bytes(self._buf[start:end + 2])
-            del self._buf[: end + 2]
-            return jpg
+
+            # 버퍼 안에서 가장 마지막(최신) SOI~EOI 프레임을 찾는다
+            last_start = self._buf.rfind(self._SOI)
+            if last_start != -1:
+                end = self._buf.find(self._EOI, last_start)
+                if end != -1:
+                    jpg = bytes(self._buf[last_start:end + 2])
+                    # 이 프레임까지 통째로 버림 → 그 이전에 밀려 있던 오래된
+                    # 프레임들도 함께 폐기되어 지연이 누적되지 않는다
+                    del self._buf[: end + 2]
+                    return jpg
+
+            # 완결된 프레임이 아직 없으면 블로킹으로 좀 더 기다린다
+            chunk = self.proc.stdout.read(4096)
+            if not chunk:  # 파이프 종료
+                return None
+            self._buf.extend(chunk)
+            if len(self._buf) > self._MAX_BUF:
+                self._buf.clear()
 
     def stop(self) -> None:
         if self.proc.poll() is None:

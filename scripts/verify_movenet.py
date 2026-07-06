@@ -52,6 +52,57 @@ REGION_COLOR = {"head": (0, 50, 220), "upper": (0, 200, 60), "lower": (220, 80, 
 REGION_LABEL = {"head": "HEAD", "upper": "UPPER", "lower": "LOWER"}
 
 
+# ── NoIR 야간 촬영 근사 시뮬레이션 ─────────────────────────────────────────────
+#
+# 주의: 이건 어디까지나 근사치다. 실제 IR 파장대에서 재질별 반사율이 가시광과
+# 다르게 나오는 부분(예: 검은 옷이 IR에선 밝게 나오는 등)은 컬러 사진 한 장에
+# 담긴 정보가 아니라서 이미지 변환으로 재현할 수 없다 — 그 부분은 실제 NoIR
+# 센서로 찍어봐야만 확인 가능하다. 여기서 흉내 내는 건 "촬영 조건이 나빠졌을
+# 때"에 해당하는 부분만이다:
+#   1) 색 정보 손실 (그레이스케일)
+#   2) IR LED가 보통 카메라 렌즈 옆에 붙어 있어 생기는 점광원 vignette
+#      (중앙부는 밝고 가장자리로 갈수록 급격히 어두워짐)
+#   3) 저조도 센서 특유의 노이즈 (신호 대비 노이즈 비율 저하)
+#   4) 노출시간이 길어지며 생기는 대비 저하
+_NOIR_VIGNETTE_CACHE: dict[tuple[int, int], np.ndarray] = {}
+
+
+def _noir_vignette_gain(h: int, w: int) -> np.ndarray:
+    """중앙이 밝고 가장자리가 어두운 점광원 조명 gain map (0~1)을 캐싱해서 반환."""
+    key = (h, w)
+    if key not in _NOIR_VIGNETTE_CACHE:
+        ys, xs = np.mgrid[0:h, 0:w]
+        cy, cx = h / 2.0, w / 2.0
+        r = np.sqrt(((xs - cx) / cx) ** 2 + ((ys - cy) / cy) ** 2)
+        gain = np.clip(1.15 - 0.55 * (r ** 2), 0.25, 1.15)
+        _NOIR_VIGNETTE_CACHE[key] = gain.astype(np.float32)
+    return _NOIR_VIGNETTE_CACHE[key]
+
+
+def simulate_noir(frame_bgr: np.ndarray) -> np.ndarray:
+    """가시광 컬러 프레임에 NoIR 야간 촬영과 "촬영 조건" 측면에서 비슷한
+    효과(색 손실 + 점광원 vignette + 저조도 노이즈 + 대비 저하)를 적용한다.
+
+    IR 파장대 고유의 재질별 반사율 차이는 재현하지 못하므로, 이 함수를 통과한
+    영상에서 검출이 잘 된다고 해서 실제 NoIR 촬영에서도 잘 된다고 단정할 수는
+    없다 (필요조건이지 충분조건은 아님).
+    """
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    h, w = gray.shape
+    gray *= _noir_vignette_gain(h, w)
+
+    # 대비 저하 (128 쪽으로 당기기 — 노출은 늘렸지만 동적 범위는 좁아지는 느낌)
+    gray = 128.0 + (gray - 128.0) * 0.7
+
+    # 저조도 센서 노이즈
+    noise = np.random.normal(0.0, 10.0, gray.shape).astype(np.float32)
+    gray += noise
+
+    gray = np.clip(gray, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+
 # ── 시각화 ───────────────────────────────────────────────────────────────────
 
 def draw_pose(frame: np.ndarray, people: list[dict], selected_idx: int | None) -> np.ndarray:
@@ -424,7 +475,11 @@ def main():
     parser.add_argument("--web-fps", type=float, default=20.0)
     parser.add_argument("--gray", action="store_true",
                         help="입력 프레임을 그레이스케일로 변환 후 3채널로 복원해 추론"
-                             " (NoIR 야간 촬영 시 컬러 정보 없는 상황을 흉내내 검출률 확인용)")
+                             " (색 정보 손실만 흉내, 순수 그레이스케일 검출률 확인용)")
+    parser.add_argument("--noir-sim", action="store_true",
+                        help="그레이스케일 + 점광원 vignette + 저조도 노이즈 + 대비 저하로"
+                             " NoIR 야간 촬영 '촬영 조건'을 근사 흉내내 추론"
+                             " (IR 파장대 고유 재질 반사율 차이는 재현 불가 — 근사치일 뿐)")
     args = parser.parse_args()
 
     tracker = PoseTracker()
@@ -467,7 +522,9 @@ def main():
             time.sleep(0.05)
             continue
 
-        if args.gray:
+        if args.noir_sim:
+            frame = simulate_noir(frame)
+        elif args.gray:
             # NoIR로 야간 촬영 시 실제로는 흑백(단채널) 영상만 얻게 되므로,
             # 컬러 정보가 없는 상태에서도 MoveNet이 잘 검출하는지 확인하기 위해
             # 컬러 정보를 실제로 날려서(그레이스케일 변환 후 3채널로 복제) 추론에 넣는다.
@@ -513,8 +570,11 @@ def main():
         display = np.hstack([vis, panel])
         cv2.putText(display, f"FPS {fps:.1f}", (10, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, C_CYAN, 2)
-        if args.gray:
-            cv2.putText(display, "GRAY MODE (NoIR 시뮬레이션)", (10, 46),
+        if args.noir_sim:
+            cv2.putText(display, "NOIR-SIM MODE (근사 시뮬레이션, 참고용)", (10, 46),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, C_YELLOW, 2)
+        elif args.gray:
+            cv2.putText(display, "GRAY MODE", (10, 46),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, C_YELLOW, 2)
 
         # 콘솔 로그

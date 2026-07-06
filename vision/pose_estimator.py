@@ -64,8 +64,9 @@ class MoveNetMultiPoseDetector:
     def __init__(
         self,
         model_path: str,
-        conf_thr: float = 0.3,
+        conf_thr: float = 0.25,        # scripts/verify_movenet.py --conf 기본값과 통일
         min_person_score: float = 0.15,
+        num_threads: int = 3,          # Pi 5 기준 무난한 값 — FPS 튜닝 시 조정
     ) -> None:
         try:
             from tflite_runtime.interpreter import Interpreter
@@ -79,7 +80,7 @@ class MoveNetMultiPoseDetector:
 
         self._interp = Interpreter(
             model_path=model_path,
-            num_threads=3
+            num_threads=num_threads,
         )
         # MultiPose Lightning은 입력 크기가 동적이라, allocate 전에 반드시
         # 실제로 쓸 크기로 resize를 먼저 해줘야 한다. 안 하면 모델에 잡혀있는
@@ -97,7 +98,7 @@ class MoveNetMultiPoseDetector:
         print(f"[movenet] 모델 로드: {model_path}")
         print(f"[movenet] 입력: {self._inp['shape']}  dtype={self._inp['dtype'].__name__}")
         print(f"[movenet] 출력: {self._out['shape']}")
-        print(f"[movenet] conf_thr={conf_thr}  min_person_score={min_person_score}")
+        print(f"[movenet] conf_thr={conf_thr}  min_person_score={min_person_score}  threads={num_threads}")
 
     def infer(self, frame_bgr: np.ndarray) -> dict:
         """

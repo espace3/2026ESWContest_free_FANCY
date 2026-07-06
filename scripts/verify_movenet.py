@@ -35,7 +35,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
-from vision.target_selector import select_target, person_center
+from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
 from vision.pose_tracker import PoseTracker
 
 # ── 색상 ─────────────────────────────────────────────────────────────────────
@@ -104,6 +104,8 @@ def simulate_noir(frame_bgr: np.ndarray) -> np.ndarray:
 
 
 # ── 시각화 ───────────────────────────────────────────────────────────────────
+# 주의: cv2.putText(Hershey 폰트)는 ASCII 전용이라 한글을 넘기면 ???로 깨져 보인다.
+# 화면에 그리는 문자열은 영문으로만 쓸 것 (콘솔 print는 한글 OK).
 
 def draw_pose(frame: np.ndarray, people: list[dict], selected_idx: int | None) -> np.ndarray:
     """검출된 모든 사람의 키포인트+골격을 그리고, 선정된 대상자만 부위 중심까지 강조한다."""
@@ -186,11 +188,11 @@ def build_panel(
             if row > h_panel - 30:
                 break
     else:
-        text("(대상자 없음)", row, C_GRAY, 0.5)
+        text("(no target)", row, C_GRAY, 0.5)
         row += 22
 
     row += 6; sep(row); row += 16
-    text("q:종료  s:스크린샷", row, C_GRAY, 0.45)
+    text("q: quit   s: snapshot", row, C_GRAY, 0.45)
     return panel
 
 
@@ -225,7 +227,7 @@ class _WebStreamState:
         self._last_stall_t = 0.0
         # 첫 연결 직후 브라우저가 멈추지 않도록 즉시 보낼 JPEG (latest None 금지)
         ph = _jpeg_encode(
-            _status_display_bgr(["MoveNet 웹 스트림", "카메라 프레임 대기 중…"]),
+            _status_display_bgr(["MoveNet web stream", "waiting for first camera frame..."]),
             self.jpeg_quality,
         )
         self._latest: bytes = ph or b""
@@ -430,6 +432,10 @@ def _open_camera(force_opencv, cam_idx, use_rpicam=False):
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, ccfg["width"])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ccfg["height"])
     cap.set(cv2.CAP_PROP_FPS, ccfg["fps"])
+    # 추론이 느릴 때 오래된 프레임이 드라이버 버퍼에 쌓여 지연이 누적되지 않게
+    # 버퍼를 최소화한다 (rpicam 백엔드의 최신-프레임-드롭과 같은 목적).
+    # V4L2 등 일부 백엔드만 지원 — 미지원 환경에서는 조용히 무시된다.
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     print(f"[camera] OpenCV (index={cam_idx})")
     return cap, "opencv"
 
@@ -463,6 +469,8 @@ def main():
     parser.add_argument("--model", default="multipose_lightning.tflite")
     parser.add_argument("--conf", type=float, default=0.25,
                         help="키포인트 신뢰도 임계값 (기본 0.25)")
+    parser.add_argument("--threads", type=int, default=3,
+                        help="TFLite 인터프리터 스레드 수 (기본 3, FPS 튜닝용)")
     parser.add_argument("--opencv", action="store_true")
     parser.add_argument("--rpicam", action="store_true",
                         help="rpicam-vid 서브프로세스로 카메라 캡처 (picamera2 미설치 시 사용)")
@@ -488,7 +496,7 @@ def main():
         print(f"[ERROR] 모델 없음: {args.model}")
         sys.exit(1)
 
-    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf)
+    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
     cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
 
     web_srv = web_state = None
@@ -508,110 +516,128 @@ def main():
 
     print("\n[verify_movenet] 시작! 키: q=종료 s=스크린샷\n")
 
-    while True:
-        t0 = time.time()
-        frame = _read_frame(cam, backend)
-        if frame is None:
-            if args.web and web_state:
-                web_state.update_stall([
-                    "카메라에서 프레임이 오지 않습니다.",
-                    "CSI 모듈: venv에 picamera2 설치 후 --opencv 빼고 실행",
-                    "USB 웹캠: --opencv --cam 0 또는 1",
-                    "다른 프로세스가 카메라 사용 중인지 확인하세요.",
-                ])
-            time.sleep(0.05)
-            continue
+    try:
+        while True:
+            t0 = time.time()
+            frame = _read_frame(cam, backend)
+            if frame is None:
+                if args.web and web_state:
+                    web_state.update_stall([
+                        "no frames from the camera.",
+                        "CSI module: install picamera2 in the venv, run without --opencv",
+                        "USB webcam: --opencv --cam 0 (or 1)",
+                        "check if another process is holding the camera.",
+                    ])
+                time.sleep(0.05)
+                continue
 
-        if args.noir_sim:
-            frame = simulate_noir(frame)
-        elif args.gray:
-            # NoIR로 야간 촬영 시 실제로는 흑백(단채널) 영상만 얻게 되므로,
-            # 컬러 정보가 없는 상태에서도 MoveNet이 잘 검출하는지 확인하기 위해
-            # 컬러 정보를 실제로 날려서(그레이스케일 변환 후 3채널로 복제) 추론에 넣는다.
-            # 3채널로 되돌리는 이유: 모델 입력 shape이 (H,W,3)으로 고정이라 채널 수를
-            # 맞춰야 하기 때문 — 각 채널 값은 전부 같아서 색 정보는 여전히 없다.
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            if args.noir_sim:
+                frame = simulate_noir(frame)
+            elif args.gray:
+                # NoIR로 야간 촬영 시 실제로는 흑백(단채널) 영상만 얻게 되므로,
+                # 컬러 정보가 없는 상태에서도 MoveNet이 잘 검출하는지 확인하기 위해
+                # 컬러 정보를 실제로 날려서(그레이스케일 변환 후 3채널로 복제) 추론에 넣는다.
+                # 3채널로 되돌리는 이유: 모델 입력 shape이 (H,W,3)으로 고정이라 채널 수를
+                # 맞춰야 하기 때문 — 각 채널 값은 전부 같아서 색 정보는 여전히 없다.
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
-        result = detector.infer(frame)          # {"detected": bool, "people": [...]}
-        people = result["people"]
+            result = detector.infer(frame)          # {"detected": bool, "people": [...]}
+            people = result["people"]
 
-        # 다중 인원 중 추적 대상 1인 선정 (bbox 면적 최대, 단 직전 대상자와 면적이
-        # 비슷하면 갈아타지 않고 유지 — 히스테리시스)
-        target_idx = (
-            select_target([p["keypoints"] for p in people], conf_thr=args.conf, prev_center=prev_center)
-            if people else None
-        )
-
-        if target_idx is not None:
-            tracker_input = {"detected": True, "regions": people[target_idx]["regions"]}
-            prev_center = person_center(people[target_idx]["keypoints"], conf_thr=args.conf)
-        else:
-            tracker_input = {"detected": False, "regions": empty_regions}
-        smoothed = tracker.update(tracker_input)
-
-        vis = draw_pose(frame, people, target_idx)
-
-        # 스무딩 결과 추가로 그리기 (흰 테두리 대신 파란 테두리로 구분)
-        h, w = vis.shape[:2]
-        for name, r in smoothed.items():
-            if r["visible"]:
-                cx, cy = int(r["cx"] * w), int(r["cy"] * h)
-                cv2.circle(vis, (cx, cy), 16, (255, 100, 0), 3)  # 파란 원
-
-        # FPS
-        dt = time.time() - t_prev; t_prev = time.time()
-        fps_hist.append(1.0 / dt if dt > 0 else 0.0)
-        if len(fps_hist) > 30: fps_hist.pop(0)
-        fps = sum(fps_hist) / len(fps_hist)
-        frame_ms = dt * 1000
-
-        panel = build_panel(people, target_idx, fps, frame_ms)
-        display = np.hstack([vis, panel])
-        cv2.putText(display, f"FPS {fps:.1f}", (10, 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, C_CYAN, 2)
-        if args.noir_sim:
-            cv2.putText(display, "NOIR-SIM MODE (근사 시뮬레이션, 참고용)", (10, 46),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, C_YELLOW, 2)
-        elif args.gray:
-            cv2.putText(display, "GRAY MODE", (10, 46),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, C_YELLOW, 2)
-
-        # 콘솔 로그
-        if time.time() - last_log >= 1.0:
-            r = people[target_idx]["regions"] if target_idx is not None else empty_regions
-            print(
-                f"\r[{time.strftime('%H:%M:%S')}] "
-                f"people={len(people)}  target={target_idx if target_idx is not None else '-':<4}  "
-                f"H={'O' if r['head']['visible'] else 'X'} "
-                f"U={'O' if r['upper']['visible'] else 'X'} "
-                f"L={'O' if r['lower']['visible'] else 'X'}  "
-                f"fps={fps:.1f}   ",
-                end="", flush=True,
+            # 다중 인원 중 추적 대상 1인 선정 (bbox 면적 최대, 단 직전 대상자와 면적이
+            # 비슷하면 갈아타지 않고 유지 — 히스테리시스)
+            target_idx = (
+                select_target([p["keypoints"] for p in people], conf_thr=args.conf, prev_center=prev_center)
+                if people else None
             )
-            last_log = time.time()
 
-        if args.web and web_state:
-            web_state.update(display)
+            if target_idx is not None:
+                new_center = person_center(people[target_idx]["keypoints"], conf_thr=args.conf)
+                # 선정된 대상이 "다른 사람"으로 교체된 프레임이면(직전 대상 위치에서
+                # match_radius보다 멀리 있으면 동일인일 수 없음) 스무딩 상태를 리셋해
+                # 새 사람 위치로 즉시 점프시킨다 — EMA가 이전 사람→새 사람 사이
+                # 허공을 미끄러지듯 이동하는 것 방지 (부드러움은 모터 속도 제한 몫).
+                if (
+                    prev_center is not None
+                    and new_center is not None
+                    and ((new_center[0] - prev_center[0]) ** 2
+                         + (new_center[1] - prev_center[1]) ** 2) ** 0.5 > DEFAULT_MATCH_RADIUS
+                ):
+                    tracker.reset()
+                tracker_input = {"detected": True, "regions": people[target_idx]["regions"]}
+                prev_center = new_center
+            else:
+                tracker_input = {"detected": False, "regions": empty_regions}
+            smoothed = tracker.update(tracker_input)
 
-        if not args.no_window:
-            cv2.imshow("Target Fan | MoveNet", display)
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                break
-            if key == ord("s"):
-                name = f"snapshot_movenet_{snap_n:04d}.jpg"
-                cv2.imwrite(name, display)
-                snap_n += 1
-                print(f"\n[snap] {name}")
-        else:
-            time.sleep(max(0, 0.02 - (time.time() - t0)))
+            vis = draw_pose(frame, people, target_idx)
 
-    if web_srv:
-        web_srv.shutdown(); web_srv.server_close()
-    _release_camera(cam, backend)
-    cv2.destroyAllWindows()
-    print("\n[verify_movenet] 종료")
+            # 스무딩 결과 추가로 그리기 (흰 테두리 대신 파란 테두리로 구분)
+            h, w = vis.shape[:2]
+            for name, r in smoothed.items():
+                if r["visible"]:
+                    cx, cy = int(r["cx"] * w), int(r["cy"] * h)
+                    cv2.circle(vis, (cx, cy), 16, (255, 100, 0), 3)  # 파란 원
+
+            # FPS
+            dt = time.time() - t_prev; t_prev = time.time()
+            fps_hist.append(1.0 / dt if dt > 0 else 0.0)
+            if len(fps_hist) > 30: fps_hist.pop(0)
+            fps = sum(fps_hist) / len(fps_hist)
+            frame_ms = dt * 1000
+
+            panel = build_panel(people, target_idx, fps, frame_ms)
+            display = np.hstack([vis, panel])
+            cv2.putText(display, f"FPS {fps:.1f}", (10, 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, C_CYAN, 2)
+            if args.noir_sim:
+                cv2.putText(display, "NOIR-SIM MODE (approximation)", (10, 46),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, C_YELLOW, 2)
+            elif args.gray:
+                cv2.putText(display, "GRAY MODE", (10, 46),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, C_YELLOW, 2)
+
+            # 콘솔 로그
+            if time.time() - last_log >= 1.0:
+                r = people[target_idx]["regions"] if target_idx is not None else empty_regions
+                print(
+                    f"\r[{time.strftime('%H:%M:%S')}] "
+                    f"people={len(people)}  target={target_idx if target_idx is not None else '-':<4}  "
+                    f"H={'O' if r['head']['visible'] else 'X'} "
+                    f"U={'O' if r['upper']['visible'] else 'X'} "
+                    f"L={'O' if r['lower']['visible'] else 'X'}  "
+                    f"fps={fps:.1f}   ",
+                    end="", flush=True,
+                )
+                last_log = time.time()
+
+            if args.web and web_state:
+                web_state.update(display)
+
+            if not args.no_window:
+                cv2.imshow("Target Fan | MoveNet", display)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    break
+                if key == ord("s"):
+                    name = f"snapshot_movenet_{snap_n:04d}.jpg"
+                    cv2.imwrite(name, display)
+                    snap_n += 1
+                    print(f"\n[snap] {name}")
+            else:
+                time.sleep(max(0, 0.02 - (time.time() - t0)))
+
+    except KeyboardInterrupt:
+        print("\n[verify_movenet] Ctrl+C 중단")
+    finally:
+        # q 종료·Ctrl+C·예외 어느 경로로 빠져도 카메라/웹서버를 반드시 정리한다
+        # (--no-window 헤드리스 모드는 Ctrl+C가 유일한 종료 수단이라 특히 중요)
+        if web_srv:
+            web_srv.shutdown(); web_srv.server_close()
+        _release_camera(cam, backend)
+        cv2.destroyAllWindows()
+        print("\n[verify_movenet] 종료")
 
 
 if __name__ == "__main__":

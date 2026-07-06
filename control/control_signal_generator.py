@@ -61,17 +61,27 @@ def estimate_distance_m(
     shoulder_px_dist: float,
     ref_shoulder_cm: float,
     focal_px: float,
+    min_m: float | None = None,
+    max_m: float | None = None,
 ) -> float | None:
     """양 어깨 키포인트 간 픽셀 거리로 카메라-사람 간 거리(m)를 추정한다 (핀홀 카메라 모델).
 
     distance_cm = ref_shoulder_cm * focal_px / shoulder_px_dist
 
     shoulder_px_dist가 0 이하면 (어깨가 감지되지 않은 경우) None을 반환한다.
+
+    min_m/max_m을 주면 결과를 그 범위로 클램프한다 — 키포인트 잡음으로 어깨
+    픽셀 거리가 순간적으로 튀면 물리적으로 말이 안 되는 거리(수십 m / 수 cm)가
+    나올 수 있어서, 유효 사용 범위(config.py distance.min_m/max_m)로 잘라낸다.
     """
     if shoulder_px_dist <= 0:
         return None
-    distance_cm = ref_shoulder_cm * focal_px / shoulder_px_dist
-    return distance_cm / 100.0
+    distance_m = ref_shoulder_cm * focal_px / shoulder_px_dist / 100.0
+    if min_m is not None and distance_m < min_m:
+        return min_m
+    if max_m is not None and distance_m > max_m:
+        return max_m
+    return distance_m
 
 
 def motor_speed_zone(distance_m: float, near_m: float, mid_m: float) -> int:

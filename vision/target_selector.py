@@ -10,6 +10,11 @@ result["people"][i]["keypoints"] 리스트를 그대로 입력으로 받아 쓴�
 
 from __future__ import annotations
 
+# "직전 대상자와 같은 사람"으로 인정하는 최대 이동 거리 (정규화 좌표 기준).
+# select_target()의 기본값이자, 호출부가 "대상자가 다른 사람으로 교체됐는지"
+# (→ PoseTracker.reset() 필요 여부) 판단할 때도 같은 기준을 쓰도록 공개해 둔다.
+DEFAULT_MATCH_RADIUS = 0.2
+
 
 def _bbox_from_keypoints(
     keypoints: list[dict], conf_thr: float
@@ -58,7 +63,7 @@ def select_target(
     conf_thr: float = 0.25,
     prev_center: tuple[float, float] | None = None,
     switch_margin: float = 0.15,
-    match_radius: float = 0.2,
+    match_radius: float = DEFAULT_MATCH_RADIUS,
 ) -> int | None:
     """여러 사람의 키포인트 리스트 중 추적 대상 1인의 인덱스를 반환한다.
 

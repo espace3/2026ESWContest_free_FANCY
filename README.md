@@ -21,7 +21,7 @@ vision/              # 순수 계산 모듈 (하드웨어 의존성 없음)
   pose_tracker.py       # PoseTracker: 선정된 대상자 부위 중심 좌표 EMA 스무딩
   target_selector.py    # 다중 인원 중 bbox 면적 최대 1인 선정 (면적 비슷하면 기존 대상자 유지하는 히스테리시스 포함)
 control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
-  control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 풍속 단계 매핑
+  control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 모터 회전 속도 단계 매핑 (풍량 아님 — 풍량은 BLE로 사용자가 부위별 지정)
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
   motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 아직 인터페이스만 정의된 STUB
 scripts/             # 단계별 수동 검증 스크립트

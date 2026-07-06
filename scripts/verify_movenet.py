@@ -422,6 +422,9 @@ def main():
     parser.add_argument("--web-port", type=int, default=8090)
     parser.add_argument("--web-quality", type=int, default=75)
     parser.add_argument("--web-fps", type=float, default=20.0)
+    parser.add_argument("--gray", action="store_true",
+                        help="입력 프레임을 그레이스케일로 변환 후 3채널로 복원해 추론"
+                             " (NoIR 야간 촬영 시 컬러 정보 없는 상황을 흉내내 검출률 확인용)")
     args = parser.parse_args()
 
     tracker = PoseTracker()
@@ -464,6 +467,15 @@ def main():
             time.sleep(0.05)
             continue
 
+        if args.gray:
+            # NoIR로 야간 촬영 시 실제로는 흑백(단채널) 영상만 얻게 되므로,
+            # 컬러 정보가 없는 상태에서도 MoveNet이 잘 검출하는지 확인하기 위해
+            # 컬러 정보를 실제로 날려서(그레이스케일 변환 후 3채널로 복제) 추론에 넣는다.
+            # 3채널로 되돌리는 이유: 모델 입력 shape이 (H,W,3)으로 고정이라 채널 수를
+            # 맞춰야 하기 때문 — 각 채널 값은 전부 같아서 색 정보는 여전히 없다.
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
         result = detector.infer(frame)          # {"detected": bool, "people": [...]}
         people = result["people"]
 
@@ -501,6 +513,9 @@ def main():
         display = np.hstack([vis, panel])
         cv2.putText(display, f"FPS {fps:.1f}", (10, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, C_CYAN, 2)
+        if args.gray:
+            cv2.putText(display, "GRAY MODE (NoIR 시뮬레이션)", (10, 46),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, C_YELLOW, 2)
 
         # 콘솔 로그
         if time.time() - last_log >= 1.0:

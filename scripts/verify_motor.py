@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""RPi 5 + lgpio tx_pwm 스텝모터 구동 통합 스크립트
-사용법:
-    python3 motor.py --type 1      # X축 일반 모터
-    python3 motor.py --type 100    # Y축 1:100 웜기어 모터
-옵션:
+"""
+scripts/verify_motor.py - RPi 5 + lgpio tx_pwm 스텝모터 구동 통합 스크립트
+
+단순 모터 구동 테스트용으로, direction 방향 제어와 x축 일반 모터와 y축 1:100 웜기어 모터 제어를 지원합니다.
+
+설치:
+    pip install lgpio
+
+실행 :
+    python3 scripts/verify_motor.py --type 1      # X축 일반 모터
+    python3 scripts/verify_motor.py --type 100    # Y축 1:100 웜기어 모터
+
+    옵션:
     --rev N        회전수 지정 (기본값: 모터별 기본치)
     --dir 0|1      방향 (기본 1)
     --sweep N      왕복 N사이클 실행 (지정 시 한 방향 테스트 대신 왕복)

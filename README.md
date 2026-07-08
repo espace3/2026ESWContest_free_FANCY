@@ -3,7 +3,7 @@
 2026 ESW Contest Codes — Team FANCY, "AI 스마트 타겟 선풍기"
 
 카메라로 사용자를 실시간 인식·추적해 팬틸트 헤드로 바람 방향을 자동 조준하고,
-머리/상체/하체 3부위를 구분해 부위별 맞춤 풍량을 제공하는 임베디드 프로젝트입니다.
+머리/상체/하체 3부위를 구분해 부위별 맞춤 풍속을 제공하는 임베디드 프로젝트입니다.
 스마트폰 앱(Flutter)과 BLE로 연동하며, 모든 추론은 온디바이스(Raspberry Pi 5)로 처리합니다.
 
 ## 플랫폼 & 스택
@@ -23,7 +23,7 @@ vision/              # 순수 계산 모듈 (하드웨어 의존성 없음)
   pose_tracker.py       # PoseTracker: 선정된 대상자 부위 중심 좌표 EMA 스무딩 + 부위별 miss 판정 (연속으로 안 보이면 visible=False, 대상 교체/재획득 시 EMA 없이 즉시 점프)
   target_selector.py    # 다중 인원 중 bbox 면적 최대 1인 선정 (면적 비슷하면 기존 대상자 유지하는 히스테리시스 포함)
 control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
-  control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 모터 회전 속도 단계 매핑 (풍량 아님 — 풍량은 BLE로 사용자가 부위별 지정)
+  control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 모터 회전 속도 단계 매핑 (풍속 아님 — 풍속은 BLE로 사용자가 부위별 지정)
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
   motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 아직 인터페이스만 정의된 STUB
 scripts/             # 단계별 수동 검증 스크립트

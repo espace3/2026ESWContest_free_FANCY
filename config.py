@@ -5,7 +5,8 @@ target_fan / config.py
 2026-07 정리: 구세대 설계(Pi 4B + 서보모터 + MediaPipe + WebSocket 서버 + IR 리모컨 +
 LLM 명령 해석) 항목을 전부 제거하고, 현행 설계(Pi 5 + 스테퍼 모터 + MoveNet MultiPose +
 BLE)에서 실제로 쓰이거나 확정된 값만 남겼습니다. 과거 값이 필요하면 git 히스토리를
-보세요. 스테퍼 핀 배정·릴레이 핀·BLE 설정은 배선/프로토콜이 확정될 때 추가합니다.
+보세요. 스테퍼 핀·구동 파라미터는 hardware/motor_test.py 실기 검증값을 반영했고
+(2026-07-08), 릴레이 핀·BLE 설정은 배선/프로토콜이 확정될 때 추가합니다.
 """
 
 import math
@@ -45,10 +46,44 @@ CFG: dict = {
     },
 
     # ── GPIO 핀 (BCM 번호) ──────────────────────────────────────────────────
-    # TODO: 배선 확정 시 스테퍼 드라이버 핀(pan/tilt 각각 STEP/DIR/ENABLE)과
-    # 릴레이 모듈 핀을 여기에 추가할 것 (hardware/motor_controller.py의 TODO 참고).
-    # 실제 배선 전에 추측으로 채워 넣지 말 것.
-    "pins": {},
+    # hardware/motor_test.py로 실기 검증된 배선 (아두이노 CNC v3 쉴드 + TMC2209).
+    # EN은 쉴드 구조상 전 축이 단일 핀(17)을 공유 — 모터 개별 disable 불가.
+    # 운용 중에는 켜둔 채 STEP/DIR로만 축별 제어한다 (enable 상태에서는 정지
+    # 중에도 유지 전류가 흘러 발열하므로, 장시간 유휴 시 전체 disable 정책은
+    # 추후 결정 — hardware/TODO.md).
+    # TODO: 릴레이 모듈 핀은 배선 확정 시 추가. 추측으로 채워 넣지 말 것.
+    "pins": {
+        "pan":  {"EN": 17, "STEP": 27, "DIR": 22},   # X축: 직결 (감속기 없음)
+        "tilt": {"EN": 17, "STEP": 20, "DIR": 21},   # Y축: 1:100 웜기어
+    },
+
+    # ── 스테퍼 구동 파라미터 (hardware/motor_test.py 검증값) ─────────────────
+    # f_max 10000은 lgpio tx_pwm 하드리밋 (11000 지정 시 실행 안 됨 확인).
+    # 스텝당 각도 = 360 / (steps_per_rev × microstep × gear_ratio)
+    #   pan ≈ 0.225°, tilt ≈ 0.00225°
+    "stepper": {
+        "steps_per_rev": 200,
+        "microstep": 8,   # TMC2209 standalone (MS1/MS2 점퍼 없음)
+        # dir_for_positive: 각도가 +방향으로 늘 때 DIR 핀에 쓸 값 (0|1).
+        # 임시값 — 실기에서 "화면 오른쪽/아래 = +각도" 방향과 일치하는지 확인 후
+        # 필요하면 뒤집을 것 (hardware/TODO.md).
+        "pan": {
+            "gear_ratio": 1,
+            "dir_for_positive": 1,
+            "f_start": 1500,
+            "f_max": 10000,
+            "ramp_segments": 8,
+            "ramp_steps_per_seg": 40,
+        },
+        "tilt": {
+            "gear_ratio": 100,
+            "dir_for_positive": 1,
+            "f_start": 800,
+            "f_max": 10000,
+            "ramp_segments": 12,
+            "ramp_steps_per_seg": 60,
+        },
+    },
 
     # ── 거리 추정 (어깨 너비 기반 — control/control_signal_generator.py) ─────
     "distance": {
@@ -63,8 +98,8 @@ CFG: dict = {
     },
 
     # ── 팬틸트 모터 회전 속도 거리 구간 (m) ──────────────────────────────────
-    # 주의: 선풍기 풍량(약풍/중풍/강풍) 아님! 추정 거리로 팬틸트가 목표를 따라가는
-    # "회전 속도" 단계를 고르는 용도다 (motor_speed_zone() 참고). 풍량은 사용자가
+    # 주의: 선풍기 풍속(약풍/중풍/강풍) 아님! 추정 거리로 팬틸트가 목표를 따라가는
+    # "회전 속도" 단계를 고르는 용도다 (motor_speed_zone() 참고). 풍속은 사용자가
     # 앱에서 BLE로 부위별로 직접 지정하는 값이라 거리 추정과는 무관하다.
     "speed_zones": {
         "near": 1.0,   # ~1m

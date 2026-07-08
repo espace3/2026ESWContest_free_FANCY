@@ -6,14 +6,18 @@ MotorController(논블로킹)에 이동 명령을 보내고 결과(소요 시간
 위치)를 출력만 합니다. 정확도 판정은 축에 붙인 마커/각도기 눈금과 출력된
 장부 각도를 사람이 대조해서 합니다.
 
+검증 각도는 90° 단위를 기본으로 한다 — 플랜지 홀/직각 기준으로 눈 확인이
+쉽다 (각도기 없이 애매한 각도를 재는 불편 방지).
+
 실행 (RPi 5, 레포 루트에서):
-    python scripts/verify_pantilt.py --axis pan --deg 30       # 단발 이동
-    python scripts/verify_pantilt.py --axis pan --sweep 30 --cycles 5
-        # ±30° 왕복 5회 후 0° 복귀 — 시작 마커와의 어긋남이 누적 오차 (<2° 목표)
+    python scripts/verify_pantilt.py --axis pan --deg 90       # 단발 이동 (기본 90°)
+    python scripts/verify_pantilt.py --axis pan --sweep 90 --cycles 5
+        # ±90° 왕복 5회 후 0° 복귀 — 시작 마커와의 어긋남이 누적 오차 (<2° 목표)
     python scripts/verify_pantilt.py --axis tilt --speed
-        # 최고 속도 실측 (tilt 예상 상한 ≈ 22.5°/s — TODO.md 참고)
+        # 최고 속도 실측, 90° 이동 (tilt 실측 10.96°/s — 2026-07-08)
     python scripts/verify_pantilt.py --axis pan --preempt
-        # 이동 중 목표 갈아타기 — 감속→방향 전환→재가속이 부드러운지 눈으로 확인
+        # 이동 중 목표 갈아타기: pan +720°(tilt +90°) 출발 → 도중 0°로 선점.
+        # 감속→반전이 부드러운지, 최종이 시작 마커(0°)로 돌아오는지 확인
     python scripts/verify_pantilt.py --axis pan --short
         # 짧은 이동 한계 실측 — 1/5/10/20/50스텝 단발 (TODO.md 항목)
     python scripts/verify_pantilt.py --axis pan --track-sim 10
@@ -72,20 +76,29 @@ def run_speed(mc, mv, axis: str, deg: float) -> None:
     mc.wait_until_idle()
     dt = time.perf_counter() - t0
     print(f"[속도] {deg:g}° / {dt:.2f}s = {deg / dt:.2f}°/s "
-          f"(가감속 포함 평균 — tilt 순항 상한 예상치는 22.5°/s)")
+          f"(가감속 포함 평균 — tilt 순항 상한은 1/16 기준 약 11.25°/s)")
+    print("측정 후 0°로 복귀합니다 (원래 동작).")
     mv(0.0); mc.wait_until_idle()
 
 
-def run_preempt(mc, mv, deg: float) -> None:
-    print(f"+{deg:g}°로 출발시킨 뒤 0.3s 후 -{deg:g}°로 갈아탑니다...")
+def run_preempt(mc, mv, axis: str) -> None:
+    """이동 중 목표 갈아타기 검증. 선점 시점에 아직 이동 중이도록 첫 목표를
+    멀리 잡고(pan은 빨라서 2회전), 최종 목표는 0°로 되돌리므로 시작 마커/
+    플랜지 홀과의 일치만 확인하면 된다."""
+    far = 720.0 if axis == "pan" else 90.0
+    wait_s = 0.3 if axis == "pan" else 2.0
+    idx = 0 if axis == "pan" else 1
+    print(f"+{far:g}°로 출발 → {wait_s:g}s 후 0°로 갈아탑니다...")
     t0 = time.perf_counter()
-    mv(+deg)
-    time.sleep(0.3)          # 이동 한중간
-    mv(-deg)                 # 선점: 감속 → drain → DIR 반전 → 재가속
-    mc.wait_until_idle()
+    mv(far)
+    time.sleep(wait_s)
+    mv(0.0)                  # 선점: 감속 → drain → DIR 반전 → 복귀
+    peak = 0.0
+    while not mc.wait_until_idle(timeout=0.02):   # 반환점 관찰용 폴링
+        peak = max(peak, mc.current_position()[idx])
     report(mc, "선점 후 최종", t0)
-    print("→ 방향 전환이 급반전 없이 감속을 거쳤는지, 최종 마커가 "
-          f"-{deg:g}°와 일치하는지 확인하세요.")
+    print(f"→ 반환점(장부) {peak:+.1f}° — 선점 시점보다 감속 거리만큼 더 간 게 정상.")
+    print("→ 급반전 없이 감속을 거쳤는지, 최종 위치가 시작 마커(0°)와 일치하는지 확인하세요.")
 
 
 def run_short(mc, axis: str) -> None:
@@ -148,15 +161,15 @@ def main() -> None:
             if args.sweep is not None:
                 run_sweep(mc, mv, args.sweep, args.cycles)
             elif args.speed:
-                run_speed(mc, mv, args.axis, args.deg or (90.0 if args.axis == "pan" else 45.0))
+                run_speed(mc, mv, args.axis, args.deg or 90.0)
             elif args.preempt:
-                run_preempt(mc, mv, args.deg or 20.0)
+                run_preempt(mc, mv, args.axis)
             elif args.short:
                 run_short(mc, args.axis)
             elif args.track_sim is not None:
                 run_track_sim(mc, mv, args.track_sim)
             else:
-                run_single(mc, mv, args.deg if args.deg is not None else 30.0)
+                run_single(mc, mv, args.deg if args.deg is not None else 90.0)
         finally:
             mc.wait_until_idle(timeout=30)
 

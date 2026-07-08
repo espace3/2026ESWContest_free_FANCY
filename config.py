@@ -57,13 +57,15 @@ CFG: dict = {
         "tilt": {"EN": 17, "STEP": 20, "DIR": 21},   # Y축: 1:100 웜기어
     },
 
-    # ── 스테퍼 구동 파라미터 (hardware/motor_test.py 검증값) ─────────────────
+    # ── 스테퍼 구동 파라미터 (motor_test.py + 실측 캘리브레이션) ──────────────
     # f_max 10000은 lgpio tx_pwm 하드리밋 (11000 지정 시 실행 안 됨 확인).
     # 스텝당 각도 = 360 / (steps_per_rev × microstep × gear_ratio)
-    #   pan ≈ 0.225°, tilt ≈ 0.00225°
+    #   pan ≈ 0.1125°, tilt ≈ 0.001125°
     "stepper": {
-        "steps_per_rev": 200,
-        "microstep": 8,   # TMC2209 standalone (MS1/MS2 점퍼 없음)
+        "steps_per_rev": 200,  # 모터 라벨 1.8°/STEP 확인 (2026-07-08)
+        # 16 = 실측 보정: 두 축 모두 명령 대비 1/2 회전 = 1/16로 동작 중.
+        # 원인 확정 필요 (hardware/TODO.md).
+        "microstep": 16,
         # dir_for_positive: 각도가 +방향으로 늘 때 DIR 핀에 쓸 값 (0|1).
         # 임시값 — 실기에서 "화면 오른쪽/아래 = +각도" 방향과 일치하는지 확인 후
         # 필요하면 뒤집을 것 (hardware/TODO.md).

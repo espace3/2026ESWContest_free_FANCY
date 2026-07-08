@@ -28,13 +28,13 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     (단순화) — 추적이 끊겨 보이면 감속 생략하고 이어가는 로직 검토 (TODO.md).
 
   - 위치는 정수 스텝으로만 기록한다 (float 각도로 들고 있으면 반올림 오차
-    누적). 각도 환산은 deg_per_step 참고 — 1스텝 = pan 0.225° / tilt 0.00225°.
+    누적). 각도 환산은 deg_per_step 참고 — 1스텝 = pan 0.1125° / tilt 0.001125°.
     큐잉 시점에 확정 기록하므로 current_position()은 이동 중 실제 로터보다
     최대 _LOOKAHEAD_S+감속 시간만큼 앞설 수 있고, idle이 되면 일치한다.
 
   - 짧은 이동(가속+감속 거리 미달)은 램프를 앞에서부터 잘라 쓰고, 아주 짧으면
     램프 없이 f_start 저속으로만 보낸다. 실전 추적의 주력인 데드존 직후 잔이동
-    (pan 2~5° = 9~22스텝)이 이 경로를 탄다 — 몇 스텝까지 정확히/조용히
+    (pan 2~5° = 18~44스텝)이 이 경로를 탄다 — 몇 스텝까지 정확히/조용히
     움직이는지 실측 필요 (TODO.md).
 
 TODO — 남은 미결 (hardware/TODO.md 참고):
@@ -79,11 +79,11 @@ class _Axis:
         self.name = name
         self.step_pin = pins["STEP"]
         self.dir_pin = pins["DIR"]
-        # 1스텝당 각도: pan(직결) 360/1600 = 0.225°, tilt(1:100) = 0.00225°
+        # 1스텝당 각도: pan(직결) 360/3200 = 0.1125°, tilt(1:100) = 0.001125°
         self.deg_per_step = 360.0 / (spr * params["gear_ratio"])
         self.dir_for_positive = params["dir_for_positive"]
         self.f_start = params["f_start"]
-        # 램프 한 구간의 스텝 수: pan 40스텝 = 9°, tilt 60스텝 = 0.135°
+        # 램프 한 구간의 스텝 수: pan 40스텝 = 4.5°, tilt 60스텝 = 0.0675°
         self.seg_steps = params["ramp_steps_per_seg"]
         n_seg = params["ramp_segments"]
         self.ramp = [
@@ -221,7 +221,7 @@ class MotorController:
         self.h = open_chip() if handle is None else handle
         pins = cfg["pins"]
         st = cfg["stepper"]
-        spr = st["steps_per_rev"] * st["microstep"]  # 1600 펄스/모터축 1회전
+        spr = st["steps_per_rev"] * st["microstep"]  # 3200 펄스/모터축 1회전
 
         # EN은 CNC v3 쉴드 구조상 전 축 공유 — 값이 다르면 배선/설정 불일치
         if pins["pan"]["EN"] != pins["tilt"]["EN"]:
@@ -259,7 +259,7 @@ class MotorController:
         """목표 각도로 이동 시작 — 논블로킹, 즉시 리턴. 이동 중 다시 부르면
         최신 목표로 갈아탄다. control_signal_generator에서 이미 회전 금지 구역
         밖으로 clamp된 각도가 들어온다고 가정한다 (여기서는 재계산하지 않음)."""
-        # 각도 → 최근접 정수 스텝 (반올림 오차는 1스텝 = pan 0.225° 미만)
+        # 각도 → 최근접 정수 스텝 (반올림 오차는 1스텝 = pan 0.1125° 미만)
         self.pan.set_target_steps(round(pan_angle_deg / self.pan.deg_per_step))
         self.tilt.set_target_steps(round(tilt_angle_deg / self.tilt.deg_per_step))
 

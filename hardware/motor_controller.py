@@ -5,7 +5,7 @@ hardware/motor_controller.py
 control/control_signal_generator.py가 계산한 각도(degree)를 받아 실제로
 GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직을 넣지 말 것.
 핀 배정·드라이버(TMC2209)·마이크로스텝·램프 파라미터는 config.py의
-"pins"/"stepper"에 있다 (hardware/motor_test.py로 실기 검증된 값).
+"pins"/"stepper"에 있다 (scripts/verify_motor.py로 실기 검증된 값).
 
 논블로킹 구조 — 메인 루프가 20~30fps로 새 목표를 던져도 막히지 않는다:
 
@@ -14,7 +14,7 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     버려진다.
 
   - 펄스는 lgpio tx_pwm으로 "청크"(재생 시간 _CHUNK_S 분량의 조각) 단위로
-    큐잉한다. motor_test.py처럼 순항 전체를 버스트 하나로 보내면 끝날 때까지
+    큐잉한다. verify_motor.py처럼 순항 전체를 버스트 하나로 보내면 끝날 때까지
     새 목표를 반영할 방법이 없어서, 짧은 조각으로 나눠 보내고 조각 경계마다
     목표 변경을 확인하는 것이다. 한번 큐에 넣은 청크는 절대 취소하지 않는다
     (도중 취소하면 실제 송출된 스텝 수를 알 수 없어 위치 장부가 깨짐). 대신
@@ -28,7 +28,7 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     (단순화) — 추적이 끊겨 보이면 감속 생략하고 이어가는 로직 검토 (TODO.md).
 
   - 위치는 정수 스텝으로만 기록한다 (float 각도로 들고 있으면 반올림 오차
-    누적). 각도 환산은 deg_per_step 참고 — 1스텝 = pan 0.1125° / tilt 0.001125°.
+    누적). 각도 환산은 deg_per_step 참고 — 1스텝 = pan 0.1125° / tilt ≈0.00121°.
     큐잉 시점에 확정 기록하므로 current_position()은 이동 중 실제 로터보다
     최대 _LOOKAHEAD_S+감속 시간만큼 앞설 수 있고, idle이 되면 일치한다.
 
@@ -79,11 +79,11 @@ class _Axis:
         self.name = name
         self.step_pin = pins["STEP"]
         self.dir_pin = pins["DIR"]
-        # 1스텝당 각도: pan(직결) 360/3200 = 0.1125°, tilt(1:100) = 0.001125°
+        # 1스텝당 각도: pan(직결) 360/3200 = 0.1125°, tilt(1:92.6 실측) ≈ 0.00121°
         self.deg_per_step = 360.0 / (spr * params["gear_ratio"])
         self.dir_for_positive = params["dir_for_positive"]
         self.f_start = params["f_start"]
-        # 램프 한 구간의 스텝 수: pan 40스텝 = 4.5°, tilt 60스텝 = 0.0675°
+        # 램프 한 구간의 스텝 수: pan 40스텝 = 4.5°, tilt 60스텝 ≈ 0.073°
         self.seg_steps = params["ramp_steps_per_seg"]
         n_seg = params["ramp_segments"]
         self.ramp = [
@@ -175,7 +175,7 @@ class _Axis:
 
         remaining = abs(delta)
         # 이동량에 맞춰 램프를 앞에서부터 k구간만 쓴다. k=0(짧은 이동)이면 램프
-        # 없이 f_start 저속으로만 보낸다 — motor_test.py의 "램프 겹침" 거부 대신
+        # 없이 f_start 저속으로만 보낸다 — verify_motor.py의 "램프 겹침" 거부 대신
         # 어떤 이동량이든 처리되도록 한 것.
         k = min(len(self.ramp), remaining // (2 * self.seg_steps))
         climbed: list[int] = []  # 올라간 램프 단계 — 감속 시 역순 재생

@@ -5,7 +5,7 @@ target_fan / config.py
 2026-07 정리: 구세대 설계(Pi 4B + 서보모터 + MediaPipe + WebSocket 서버 + IR 리모컨 +
 LLM 명령 해석) 항목을 전부 제거하고, 현행 설계(Pi 5 + 스테퍼 모터 + MoveNet MultiPose +
 BLE)에서 실제로 쓰이거나 확정된 값만 남겼습니다. 과거 값이 필요하면 git 히스토리를
-보세요. 스테퍼 핀·구동 파라미터는 hardware/motor_test.py 실기 검증값을 반영했고
+보세요. 스테퍼 핀·구동 파라미터는 scripts/verify_motor.py 실기 검증값을 반영했고
 (2026-07-08), 릴레이 핀·BLE 설정은 배선/프로토콜이 확정될 때 추가합니다.
 """
 
@@ -46,7 +46,7 @@ CFG: dict = {
     },
 
     # ── GPIO 핀 (BCM 번호) ──────────────────────────────────────────────────
-    # hardware/motor_test.py로 실기 검증된 배선 (아두이노 CNC v3 쉴드 + TMC2209).
+    # scripts/verify_motor.py로 실기 검증된 배선 (아두이노 CNC v3 쉴드 + TMC2209).
     # EN은 쉴드 구조상 전 축이 단일 핀(17)을 공유 — 모터 개별 disable 불가.
     # 운용 중에는 켜둔 채 STEP/DIR로만 축별 제어한다 (enable 상태에서는 정지
     # 중에도 유지 전류가 흘러 발열하므로, 장시간 유휴 시 전체 disable 정책은
@@ -54,10 +54,10 @@ CFG: dict = {
     # TODO: 릴레이 모듈 핀은 배선 확정 시 추가. 추측으로 채워 넣지 말 것.
     "pins": {
         "pan":  {"EN": 17, "STEP": 27, "DIR": 22},   # X축: 직결 (감속기 없음)
-        "tilt": {"EN": 17, "STEP": 20, "DIR": 21},   # Y축: 1:100 웜기어
+        "tilt": {"EN": 17, "STEP": 20, "DIR": 21},   # Y축: 웜기어 (유효비 92.6 실측)
     },
 
-    # ── 스테퍼 구동 파라미터 (motor_test.py + 실측 캘리브레이션) ──────────────
+    # ── 스테퍼 구동 파라미터 (verify_motor.py + 실측 캘리브레이션) ────────────
     # f_max 10000은 lgpio tx_pwm 하드리밋 (11000 지정 시 실행 안 됨 확인).
     # 스텝당 각도 = 360 / (steps_per_rev × microstep × gear_ratio)
     #   pan ≈ 0.1125°, tilt ≈ 0.001167°

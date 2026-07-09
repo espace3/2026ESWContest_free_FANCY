@@ -25,9 +25,12 @@ vision/              # 순수 계산 모듈 (하드웨어 의존성 없음)
 control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
   control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 모터 회전 속도 단계 매핑 (풍속 아님 — 풍속은 BLE로 사용자가 부위별 지정)
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
-  motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 아직 인터페이스만 정의된 STUB
+  motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 논블로킹 (축별 워커 스레드, 최신 목표 선점)
+  TODO.md              # 하드웨어 관련 미결 결정·실기 검증 항목
 scripts/             # 단계별 수동 검증 스크립트
   verify_movenet.py     # 1단계: 카메라 캡처 + 시각화/웹스트림으로 포즈 추정 확인
+  verify_motor.py       # 2단계: 스텝모터 단독 구동 (lgpio tx_pwm, 회전수 단위)
+  verify_pantilt.py     # 2단계: MotorController 각도 단위 검증 (단발/왕복/속도/선점/짧은 이동)
 config.py            # 전체 설정값 (CFG 딕셔너리)
 ```
 
@@ -48,8 +51,9 @@ python scripts/verify_movenet.py --noir-sim                         # NoIR 야�
 
 ## 개발 단계
 
-1. Pi 5 FPS 검증 (현재 단계 — `scripts/verify_movenet.py`)
-2. 팬틸트 모터 제어
+1. Pi 5 FPS 검증 (완료 — `scripts/verify_movenet.py`)
+2. 팬틸트 모터 제어 (현재 단계 — `scripts/verify_motor.py`, `scripts/verify_pantilt.py`,
+   잔여 항목은 `hardware/TODO.md`)
 3. BLE · 앱 연동
 4. 전체 통합 · 성능 지표 측정
 
@@ -64,9 +68,9 @@ python scripts/verify_movenet.py --noir-sim                         # NoIR 야�
   지금은 `vision/pose_estimator.py`, `vision/target_selector.py`, `vision/pose_tracker.py`,
   `control/control_signal_generator.py`가 이 원칙을 따릅니다.
 - **하드웨어 호출 전용 모듈** (계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만 함):
-  릴레이 제어, 모터 제어, BLE 서버. `hardware/motor_controller.py`는 아직 배선/드라이버가
-  정해지지 않아 인터페이스만 있는 STUB 상태입니다 (실제 GPIO 코드는 하드웨어 스펙이
-  정해진 뒤에 채울 것).
+  릴레이 제어, 모터 제어, BLE 서버. `hardware/motor_controller.py`는 lgpio 기반
+  논블로킹 구현이 완료됐고 (핀·구동 파라미터는 `config.py`의 실측값), 릴레이·BLE는
+  배선/프로토콜 확정 후 추가합니다.
 - 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`처럼 순수 함수로 각도를 계산하고,
   `motor_controller.move_to(angle)`이 실제 GPIO 호출을 전담합니다. 이렇게 분리해두면
   모터 드라이버를 바꾸거나 계산 버그를 찾을 때 서로 영향 없이 수정·검증할 수 있습니다.

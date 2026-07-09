@@ -44,13 +44,13 @@ MOTORS = {
         "F_MAX": 10000,
         "RAMP_SEGMENTS": 12,
         "RAMP_STEPS_PER_SEG": 60,
-        "DEFAULT_REV": 50,        # 모터축 50회전 = 출력축 180도
+        "DEFAULT_REV": 50,        # 모터축 50회전 = 출력축 약 194° (유효비 92.6 실측)
     },
 }
 
 STEPS_PER_REV = 200
-MICROSTEP = 8                     # TMC2209 standalone: MS1, MS2 점퍼 없음
-SPR = STEPS_PER_REV * MICROSTEP   # 1600 펄스/회전
+MICROSTEP = 16                    # 실측 (모터축 회전수로 확인, 2026-07-09)
+SPR = STEPS_PER_REV * MICROSTEP   # 3200 펄스/회전
 
 
 class Stepper:

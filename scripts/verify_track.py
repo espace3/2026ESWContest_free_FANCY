@@ -144,8 +144,8 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
     # ── 제어 파라미터 (실험이라 시작값은 임의 — 실기에서 튜닝) ────────────────
-    p.add_argument("--gain", type=float, default=0.6,
-                   help="비례 게인. 오차각의 몇 배를 현재각에 더할지 (기본 0.6). "
+    p.add_argument("--gain", type=float, default=0.3,
+                   help="비례 게인. 오차각의 몇 배를 현재각에 더할지 (기본 0.3). "
                         "방향 미검증 초기엔 0.3 권장, 진동하면 낮출 것")
     p.add_argument("--deadzone", type=float, default=1.0,
                    help="목표각 변화가 이 각도(°) 이하면 모터에 안 보냄 (떨림 억제)")

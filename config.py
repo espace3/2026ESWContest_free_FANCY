@@ -60,12 +60,12 @@ CFG: dict = {
     # ── 스테퍼 구동 파라미터 (motor_test.py + 실측 캘리브레이션) ──────────────
     # f_max 10000은 lgpio tx_pwm 하드리밋 (11000 지정 시 실행 안 됨 확인).
     # 스텝당 각도 = 360 / (steps_per_rev × microstep × gear_ratio)
-    #   pan ≈ 0.1125°, tilt ≈ 0.001125°
+    #   pan ≈ 0.1125°, tilt ≈ 0.001167°
+    # 2026-07-09: tilt 축에 모터축 36°(=10.0회전 기대치) 명령 후 실제 회전수를
+    # 세어 10.0회전 확인 → steps_per_rev=200 × microstep=16 조합이 맞음을 확정.
     "stepper": {
         "steps_per_rev": 200,  # 모터 라벨 1.8°/STEP 확인 (2026-07-08)
-        # 16 = 실측 보정: 두 축 모두 명령 대비 1/2 회전 = 1/16로 동작 중.
-        # 원인 확정 필요 (hardware/TODO.md).
-        "microstep": 16,
+        "microstep": 16,       # 실측
         # dir_for_positive: 각도가 +방향으로 늘 때 DIR 핀에 쓸 값 (0|1).
         # 임시값 — 실기에서 "화면 오른쪽/아래 = +각도" 방향과 일치하는지 확인 후
         # 필요하면 뒤집을 것 (hardware/TODO.md).
@@ -78,7 +78,9 @@ CFG: dict = {
             "ramp_steps_per_seg": 40,
         },
         "tilt": {
-            "gear_ratio": 100,
+            # 92.6 = 실측 (라벨은 100). 무부하 벤치 측정값 — 부하(팬 헤드)
+            # 장착 후 재확인할 것.
+            "gear_ratio": 92.6,
             "dir_for_positive": 1,
             "f_start": 800,
             "f_max": 10000,

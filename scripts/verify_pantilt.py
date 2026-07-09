@@ -3,18 +3,16 @@ scripts/verify_pantilt.py - 팬틸트 모터 2단계 수동 검증 스크립트
 
 이 파일은 계산 로직을 포함하지 않습니다. hardware/motor_controller.py의
 MotorController(논블로킹)에 이동 명령을 보내고 결과(소요 시간·최종 장부
-위치)를 출력만 합니다. 정확도 판정은 축에 붙인 마커/각도기 눈금과 출력된
-장부 각도를 사람이 대조해서 합니다.
+위치)를 출력만 합니다. 
+정확도 판정은 축에 붙인 마커/각도기 눈금과 출력된 장부 각도를 사람이 대조해서 합니다.
 
-검증 각도는 90° 단위를 기본으로 한다 — 플랜지 홀/직각 기준으로 눈 확인이
-쉽다 (각도기 없이 애매한 각도를 재는 불편 방지).
 
 실행 (RPi 5, 레포 루트에서):
     python scripts/verify_pantilt.py --axis pan --deg 90       # 단발 이동 (기본 90°)
     python scripts/verify_pantilt.py --axis pan --sweep 90 --cycles 5
         # ±90° 왕복 5회 후 0° 복귀 — 시작 마커와의 어긋남이 누적 오차 (<2° 목표)
     python scripts/verify_pantilt.py --axis tilt --speed
-        # 최고 속도 실측, 90° 이동 (tilt 실측 10.96°/s — 2026-07-08)
+        # 최고 속도 실측, 90° 이동 (gear_ratio=92.6 반영 후 이론상 ≈12.15°/s)
     python scripts/verify_pantilt.py --axis pan --preempt
         # 이동 중 목표 갈아타기: pan +720°(tilt +90°) 출발 → 도중 0°로 선점.
         # 감속→반전이 부드러운지, 최종이 시작 마커(0°)로 돌아오는지 확인
@@ -76,7 +74,7 @@ def run_speed(mc, mv, axis: str, deg: float) -> None:
     mc.wait_until_idle()
     dt = time.perf_counter() - t0
     print(f"[속도] {deg:g}° / {dt:.2f}s = {deg / dt:.2f}°/s "
-          f"(가감속 포함 평균 — tilt 순항 상한은 1/16 기준 약 11.25°/s)")
+          f"(가감속 포함 평균 — tilt 순항 상한은 gear_ratio=92.6 기준 약 12.15°/s)")
     print("측정 후 0°로 복귀합니다 (원래 동작).")
     mv(0.0); mc.wait_until_idle()
 

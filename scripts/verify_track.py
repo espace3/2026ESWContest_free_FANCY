@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -78,7 +79,8 @@ from vision.pose_tracker import PoseTracker
 from control.control_signal_generator import compute_pan_angle, apply_deadzone, clamp_angle
 # 카메라 캡처 백엔드는 verify_movenet 것을 그대로 재사용한다 (중복 구현 방지).
 # verify_movenet은 hardware(lgpio)를 import하지 않으므로 --dry-run 개발 PC에서도 안전.
-from verify_movenet import _open_camera, _read_frame, _release_camera, draw_pose
+from verify_movenet import (_open_camera, _read_frame, _release_camera, draw_pose,
+                            _WebStreamState, _make_handler, _ThreadedHTTP)
 
 # 어깨 키포인트 인덱스 (COCO): 5=l_shoulder, 6=r_shoulder, 0=nose
 _L_SHOULDER, _R_SHOULDER, _NOSE = 5, 6, 0
@@ -162,6 +164,13 @@ def main() -> None:
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",
                    help="모터/lgpio 없이 각도 계산만 (개발 PC 검증용)")
+    # ── 웹 스트림 (SSH 등 디스플레이 없을 때 브라우저로 확인) ──────────────────
+    p.add_argument("--web", action="store_true",
+                   help="MJPEG 웹 스트림 송출. SSH 환경에선 보통 --web --no-window 로 실행")
+    p.add_argument("--web-host", default="0.0.0.0")
+    p.add_argument("--web-port", type=int, default=8090)
+    p.add_argument("--web-quality", type=int, default=75)
+    p.add_argument("--web-fps", type=float, default=20.0)
     args = p.parse_args()
 
     if not Path(args.model).exists():
@@ -174,6 +183,14 @@ def main() -> None:
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
     cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
     tracker = PoseTracker()
+
+    # 웹 스트림 (verify_movenet의 인프라 재사용) — SSH에서 브라우저로 추적 상태 확인
+    web_srv = web_state = None
+    if args.web:
+        web_state = _WebStreamState(args.web_quality, args.web_fps)
+        web_srv = _ThreadedHTTP((args.web_host, args.web_port), _make_handler(web_state))
+        threading.Thread(target=web_srv.serve_forever, daemon=True).start()
+        print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
 
     # PoseTracker의 3부위 슬롯 중 'upper'에 우리가 계산한 가슴점을 실어 재사용한다
     # (miss 유예 + 재획득 즉시 점프 로직을 그대로 활용 — 요구사항 5의 "몇 프레임은
@@ -203,6 +220,9 @@ def main() -> None:
                 t0 = time.time()
                 frame = _read_frame(cam, backend)
                 if frame is None:
+                    if args.web and web_state:
+                        web_state.update_stall(["no frames from the camera.",
+                                                "try --rpicam, or check camera wiring."])
                     time.sleep(0.03)
                     continue
 
@@ -280,7 +300,7 @@ def main() -> None:
                           f"fps={fps:4.1f}  ", end="", flush=True)
                     last_log = time.time()
 
-                if not args.no_window:
+                if not args.no_window or args.web:
                     vis = draw_pose(frame, people, target_idx)
                     h, w = vis.shape[:2]
                     tx = int(args.target_cx * w)
@@ -294,15 +314,20 @@ def main() -> None:
                                 0.7, (0, 210, 230), 2)
                     cv2.putText(vis, f"pan_cmd {last_sent:+.1f}deg  fps {fps:.1f}",
                                 (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 200, 0), 2)
-                    cv2.imshow("Target Fan | Pan Tracking", vis)
-                    if (cv2.waitKey(1) & 0xFF) == ord("q"):
-                        break
-                else:
+                    if args.web and web_state:
+                        web_state.update(vis)
+                    if not args.no_window:
+                        cv2.imshow("Target Fan | Pan Tracking", vis)
+                        if (cv2.waitKey(1) & 0xFF) == ord("q"):
+                            break
+                if args.no_window:
                     time.sleep(max(0.0, 0.02 - (time.time() - t0)))
 
     except KeyboardInterrupt:
         print("\n[verify_track] Ctrl+C 중단")
     finally:
+        if web_srv:
+            web_srv.shutdown(); web_srv.server_close()
         _release_camera(cam, backend)
         cv2.destroyAllWindows()
         print("\n[verify_track] 종료")

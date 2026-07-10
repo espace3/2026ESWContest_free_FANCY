@@ -18,7 +18,7 @@ docstring 참고 — 수직도 동일하다.
 
 주의: 틸트는 웜기어라 수동 복귀가 어렵다 — 종료 시 자동으로 0°에 복귀한다.
 
-실행 (RPi 5, 레포 루트에서):
+실행 (RPi 5, 레포 루트에서): (--rpicam 필수)
     python scripts/verify_track_tilt.py                     # 가슴 수직 추적 (창 표시)
     python scripts/verify_track_tilt.py --gain 0.1          # 방향 확인용 저게인
     python scripts/verify_track_tilt.py --invert            # 방향 반전
@@ -105,7 +105,7 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
     # ── 제어 파라미터 (시작값은 임의 — 실기에서 튜닝) ─────────────────────────
-    p.add_argument("--gain", type=float, default=0.25,
+    p.add_argument("--gain", type=float, default=0.3,
                    help="틸트 비례 게인. 방향 미검증 초기엔 0.1 권장, 진동하면 낮출 것")
     p.add_argument("--deadzone", type=float, default=0.5,
                    help="목표각 변화가 이 각도(°) 이하면 모터에 안 보냄 (떨림 억제)")

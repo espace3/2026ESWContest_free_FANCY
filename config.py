@@ -81,7 +81,7 @@ CFG: dict = {
             # 92.6 = 실측 (라벨은 100). 무부하 벤치 측정값 — 부하(팬 헤드)
             # 장착 후 재확인할 것.
             "gear_ratio": 92.6,
-            "dir_for_positive": 1, # 정면 설정 완료 (2026-07-10)
+            "dir_for_positive": 0, # 정면 설정 완료 (2026-07-10)
             "f_start": 800,
             "f_max": 10000,
             "ramp_segments": 12,
@@ -95,7 +95,7 @@ CFG: dict = {
     # control 쪽 clamp_angle()에 물려서 쓴다 (motor_controller는 재검사하지 않음).
     "limits": {
         "pan":  {"min": -100.0, "max": 100.0},
-        "tilt": {"min": -15.0,  "max": 15.0},
+        "tilt": {"min": -30.0,  "max": 15.0},
     },
 
     # ── 거리 추정 (어깨 너비 기반 — control/control_signal_generator.py) ─────

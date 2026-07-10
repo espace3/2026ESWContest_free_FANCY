@@ -71,7 +71,7 @@ CFG: dict = {
         # 필요하면 뒤집을 것 (hardware/TODO.md).
         "pan": {
             "gear_ratio": 1,
-            "dir_for_positive": 1,
+            "dir_for_positive": 1, # 확인 완료 (2026-07-09)
             "f_start": 1500,
             "f_max": 10000,
             "ramp_segments": 8,
@@ -81,7 +81,7 @@ CFG: dict = {
             # 92.6 = 실측 (라벨은 100). 무부하 벤치 측정값 — 부하(팬 헤드)
             # 장착 후 재확인할 것.
             "gear_ratio": 92.6,
-            "dir_for_positive": 1,
+            "dir_for_positive": 1, # 기준이 어디인지 기록 필요
             "f_start": 800,
             "f_max": 10000,
             "ramp_segments": 12,

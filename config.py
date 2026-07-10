@@ -89,6 +89,15 @@ CFG: dict = {
         },
     },
 
+    # ── 회전 소프트 리밋 (°) ─────────────────────────────────────────────────
+    # 회전 금지 구역(HW deadline)은 조립 후 확정 (hardware/TODO.md). 확정 전까지의
+    # 보수적 임시값 — 특히 tilt는 축 방향·기구 한계 미실측이라 좁게 잡았다.
+    # control 쪽 clamp_angle()에 물려서 쓴다 (motor_controller는 재검사하지 않음).
+    "limits": {
+        "pan":  {"min": -100.0, "max": 100.0},
+        "tilt": {"min": -15.0,  "max": 15.0},
+    },
+
     # ── 거리 추정 (어깨 너비 기반 — control/control_signal_generator.py) ─────
     "distance": {
         "ref_shoulder_cm": 40,   # 성인 평균 어깨 너비 (cm)

@@ -72,10 +72,10 @@ CFG: dict = {
         "pan": {
             "gear_ratio": 1,
             "dir_for_positive": 1, # 확인 완료 (2026-07-09)
-            "f_start": 1500,
-            "f_max": 10000,
-            "ramp_segments": 8,
-            "ramp_steps_per_seg": 40,
+            "f_start": 700,
+            "f_max": 2000,
+            "ramp_segments": 12,
+            "ramp_steps_per_seg": 90,
         },
         "tilt": {
             # 92.6 = 실측 (라벨은 100). 무부하 벤치 측정값 — 부하(팬 헤드)

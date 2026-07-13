@@ -9,8 +9,11 @@ apps/ESW_BLE_app/docs/ble_protocol.md 를 따릅니다 (변경 시 함께 갱신
 
 설치:
     sudo apt install -y bluez          # BlueZ 데몬 (Pi OS 기본 포함)
-    pip install bluez_peripheral       # 순수 파이썬(dbus_fast) — 컴파일/시스템
-                                        # 파이썬 바인딩 불필요, pyenv venv에서도 그대로 설치됨
+    pip install --pre bluez_peripheral # 순수 파이썬(dbus_fast) — 컴파일/시스템
+                                        # 파이썬 바인딩 불필요, pyenv venv에서도 그대로 설치됨.
+                                        # ⚠ --pre 필수: PyPI 기본(최신 stable)은 0.1.7(2022,
+                                        # 구버전 API, adapter.py 없음). 이 스크립트는 0.2.0a5
+                                        # 이상(dbus_fast 기반 재작성판) 기준으로 작성됨.
     sudo usermod -aG bluetooth $USER   # system dbus 접근 권한 (재로그인 필요)
 
 실행:

@@ -127,10 +127,15 @@ class _TrackingSupervisor:
 
     def _apply(self) -> None:
         if self._target_active():
+            # 직전 스레드가 (정지 요청을 받았지만 루프 맨 위 체크 지점까지 아직
+            # 못 돌아와) 살아있을 수 있다 — "이미 실행 중"으로 오인해 조용히
+            # 리턴하면 이후 시작 요청이 영영 씹히므로, 반드시 정지시키고 join한
+            # 뒤 새로 시작한다 (기존엔 여기서 is_alive()면 그냥 return 해버려서
+            # 레이스가 나면 추적이 재개 안 되는 버그가 있었다).
             if self._thread and self._thread.is_alive():
-                return  # 이미 실행 중
-            if self._thread:
-                self._thread.join(timeout=5)  # 직전 스레드가 아직 안 끝났으면 잠깐 대기
+                print("[E2E] 이전 추적 스레드 정리 중...")
+                self._stop_event.set()
+                self._thread.join(timeout=5)
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._run_fn,
                                             args=(self._stop_event,), daemon=True)

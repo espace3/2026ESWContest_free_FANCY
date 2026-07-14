@@ -86,7 +86,9 @@ class _Axis:
         # 램프 한 구간의 스텝 수: pan 40스텝 = 4.5°, tilt 60스텝 ≈ 0.073°
         self.seg_steps = params["ramp_steps_per_seg"]
         n_seg = params["ramp_segments"]
-        self.ramp = [
+        # 첫 원소를 f_start 그대로 둬서 정지→기동 시 "f_start + 한 구간분" 만큼
+        # 튀는 순간 점프를 없앤다 (2026-07-13, tilt 기동 시 탈조음 원인).
+        self.ramp = [params["f_start"]] + [
             int(params["f_start"] + (params["f_max"] - params["f_start"]) * (i + 1) / n_seg)
             for i in range(n_seg)
         ]

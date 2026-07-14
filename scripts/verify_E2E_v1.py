@@ -10,6 +10,11 @@ scripts/verify_E2E_v1.py - BLE 타겟 모드 → 팬/틸트 추적 루프 연동
 (0x03)의 머리/상체/하체 개별 조준은 다루지 않는다(그건 verify_fulltrack.py의
 전신 시나리오 몫). 풍량 write도 print만 한다(릴레이/팬속도 하드웨어 미완성).
 
+카메라는 모터/디텍터와 달리 프로세스 전체가 아니라 **추적 세션(스레드)마다
+새로 열고 끝나면 반드시 해제**한다 — 특히 `--rpicam`(rpicam-vid 서브프로세스)
+백엔드는 아무도 안 읽는 동안 파이프가 막혀 캡처 자체가 멎어버리는 게 실기로
+확인됐다(기본 모드로 쉬다가 타겟 모드로 돌아오면 화면이 멈춘 채 그대로).
+
 설치: verify_ble.py, verify_track_pan/tilt/pantilt.py의 설치 안내를 합친 것과 동일
     (bluez_peripheral --pre, tflite-runtime, opencv-python 등).
 
@@ -73,15 +78,29 @@ def _hex(value):
     return " ".join(f"0x{b:02X}" for b in value)
 
 
-def _make_runner(axis, cam, backend, detector, tracker, mc, args, web_state):
-    """axis에 맞는 tracking_core 루프를 stop_event 하나만 받는 콜러블로 감싼다."""
+def _make_runner(axis, detector, tracker, mc, args, web_state):
+    """axis에 맞는 tracking_core 루프를 stop_event 하나만 받는 콜러블로 감싼다.
+
+    카메라는 세션(스레드)마다 새로 열고 끝나면 반드시 해제한다 — 특히
+    `--rpicam`(rpicam-vid 서브프로세스) 백엔드는 아무도 읽지 않는 동안 파이프
+    버퍼가 차서 캡처 자체가 멎어버리는 게 실기로 확인됨. "기본 모드"로 쉬는
+    동안 카메라를 계속 열어두면 재진입 시 그 멎은 상태(화면 정지) 그대로
+    남는다 — 매번 새로 열면 이 문제를 피한다.
+    """
+    def _open_cam():
+        return _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
+
     if axis == "pan":
         fov_h = CFG["fov"]["h"]
         sign = -1.0 if args.invert else 1.0
 
         def _run(stop_event):
-            run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                             fov_h, sign, web_state=web_state)
+            cam, backend = _open_cam()
+            try:
+                run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
+                                 fov_h, sign, web_state=web_state)
+            finally:
+                _release_camera(cam, backend)
 
         return _run
 
@@ -91,8 +110,12 @@ def _make_runner(axis, cam, backend, detector, tracker, mc, args, web_state):
         aim_key = "upper" if args.region == "chest" else args.region
 
         def _run(stop_event):
-            run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                              fov_v, sign, aim_key, web_state=web_state)
+            cam, backend = _open_cam()
+            try:
+                run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
+                                  fov_v, sign, aim_key, web_state=web_state)
+            finally:
+                _release_camera(cam, backend)
 
         return _run
 
@@ -101,8 +124,12 @@ def _make_runner(axis, cam, backend, detector, tracker, mc, args, web_state):
     sign_tilt = -1.0 if args.invert_tilt else 1.0
 
     def _run(stop_event):
-        run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                             fov_h, fov_v, sign_pan, sign_tilt, web_state=web_state)
+        cam, backend = _open_cam()
+        try:
+            run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
+                                 fov_h, fov_v, sign_pan, sign_tilt, web_state=web_state)
+        finally:
+            _release_camera(cam, backend)
 
     return _run
 
@@ -275,7 +302,6 @@ def main() -> None:
         sys.exit(1)
 
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
-    cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
     tracker = PoseTracker()
 
     web_srv = web_state = None
@@ -292,8 +318,7 @@ def main() -> None:
             mc.home()  # 현재 물리 위치 = 0°(각 축). 시작 위치에 마커를 붙여두면 대조에 편함
             print("[motor] 현재 위치를 0°로 설정 (임시 호밍).")
 
-            run_fn = _make_runner(args.axis, cam, backend, detector, tracker, mc,
-                                  args, web_state)
+            run_fn = _make_runner(args.axis, detector, tracker, mc, args, web_state)
             supervisor = _TrackingSupervisor(run_fn)
 
             print(f"[E2E] axis={args.axis} — BLE 타겟 모드(0x02/0x03) 명령 대기 중.")
@@ -312,7 +337,6 @@ def main() -> None:
     finally:
         if web_srv:
             web_srv.shutdown(); web_srv.server_close()
-        _release_camera(cam, backend)
         cv2.destroyAllWindows()
         print("\n[E2E] 종료")
 

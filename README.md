@@ -24,6 +24,7 @@ vision/              # 순수 계산 모듈 (하드웨어 의존성 없음)
   target_selector.py    # 다중 인원 중 bbox 면적 최대 1인 선정 (면적 비슷하면 기존 대상자 유지하는 히스테리시스 포함)
 control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
   control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 모터 회전 속도 단계 매핑 (풍속 아님 — 풍속은 BLE로 사용자가 부위별 지정)
+  fullbody_scenario.py         # 전신(머리→발) 추적 시나리오 상태기계: 스캔→웨이포인트 순찰, 이동 재획득(재조준/어깨 탐색), 가림·틸트 리밋 처리
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
   motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 논블로킹 (축별 워커 스레드, 최신 목표 선점)
   TODO.md              # 하드웨어 관련 미결 결정·실기 검증 항목
@@ -31,6 +32,15 @@ scripts/             # 단계별 수동 검증 스크립트
   verify_movenet.py     # 1단계: 카메라 캡처 + 시각화/웹스트림으로 포즈 추정 확인
   verify_motor.py       # 2단계: 스텝모터 단독 구동 (lgpio tx_pwm, 회전수 단위)
   verify_pantilt.py     # 2단계: MotorController 각도 단위 검증 (단발/왕복/속도/선점/짧은 이동)
+  tracking_core.py      # 3단계 공유 모듈: chest_point/_DryMotor/_open_motor +
+                         # run_pan/tilt/pantilt_tracking (아래 세 verify_track_*.py가 공용)
+  verify_track_pan.py   # 3단계: 카메라 기반 팬 추적 닫힌 루프 (가슴 화면 중앙 정렬)
+  verify_track_tilt.py  # 3단계: 틸트 단독 추적 닫힌 루프 (방향/속도/소프트 리밋 검증, 부위 조준 예행)
+  verify_track_pantilt.py # 3단계: 팬+틸트 동시 추적 닫힌 루프 (어깨 중심 지속 조준 — 한 관측=한 명령)
+  verify_fulltrack.py   # 4단계: 팬+틸트 전신 추적 시나리오 (fullbody_scenario 검증, 원점 복귀/복원 포함)
+  verify_ble.py         # BLE 단계: bluez_peripheral GATT 서버 print 검증 (ESW-FAN 광고, 앱 write 수신 확인)
+  verify_E2E_v1.py      # BLE 단계 v1: 앱 "타겟 모드" write → tracking_core 축별 추적 루프
+                         # 시작/정지 연동 (--axis pan|tilt|pantilt). 부위별 스캔은 미포함(4단계 몫).
 config.py            # 전체 설정값 (CFG 딕셔너리)
 ```
 
@@ -54,7 +64,11 @@ python scripts/verify_movenet.py --noir-sim                         # NoIR 야�
 1. Pi 5 FPS 검증 (완료 — `scripts/verify_movenet.py`)
 2. 팬틸트 모터 제어 (현재 단계 — `scripts/verify_motor.py`, `scripts/verify_pantilt.py`,
    잔여 항목은 `hardware/TODO.md`)
-3. BLE · 앱 연동
+3. BLE · 앱 연동 (진행 중 — `scripts/verify_ble.py`, 프로토콜 명세는
+   앱 저장소 `apps/ESW_BLE_app/docs/ble_protocol.md`가 기준).
+   `scripts/verify_E2E_v1.py --axis pan|tilt|pantilt`로 앱의 "타겟 모드"
+   write에 맞춰 해당 축 추적 루프를 시작/정지하는 v1 통합까지 진행
+   (부위 인식별 개별 조준은 4단계 `verify_fulltrack.py` 몫으로 남겨둠).
 4. 전체 통합 · 성능 지표 측정
 
 각 단계는 독립적으로 검증 가능하도록 모듈화합니다.

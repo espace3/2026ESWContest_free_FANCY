@@ -45,7 +45,6 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
-import time
 from pathlib import Path
 
 import cv2
@@ -56,64 +55,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector
-from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
 from vision.pose_tracker import PoseTracker
-from control.control_signal_generator import compute_pan_angle, apply_deadzone, clamp_angle
+# 루프 본문/헬퍼는 tracking_core로 추출됨 (verify_track_tilt/pantilt와 공유).
+from tracking_core import _open_motor, run_pan_tracking
 # 카메라 캡처 백엔드는 verify_movenet 것을 그대로 재사용한다 (중복 구현 방지).
 # verify_movenet은 hardware(lgpio)를 import하지 않으므로 --dry-run 개발 PC에서도 안전.
-from verify_movenet import (_open_camera, _read_frame, _release_camera, draw_pose,
+from verify_movenet import (_open_camera, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
-
-# 어깨 키포인트 인덱스 (COCO): 5=l_shoulder, 6=r_shoulder, 0=nose
-_L_SHOULDER, _R_SHOULDER, _NOSE = 5, 6, 0
-
-
-def chest_point(keypoints: list[dict], conf_thr: float) -> dict:
-    """선정된 사람의 '가슴' 조준점(정규화 cx/cy)을 어깨 중점으로 계산한다.
-
-    가슴을 어깨 중점(5,6)으로 잡는 이유: 부위 모듈의 'upper'(어깨+엉덩이 중점)는
-    실제로는 배/허리라 가슴이 아니다. 안정성을 위해 폴백 로직을 갖추고 있으며,
-    아무것도 없으면 visible=False.
-    """
-    pts = [(keypoints[i]["x"], keypoints[i]["y"])
-           for i in (_L_SHOULDER, _R_SHOULDER) if keypoints[i]["conf"] >= conf_thr]
-    if pts:
-        return {"cx": sum(p[0] for p in pts) / len(pts),
-                "cy": sum(p[1] for p in pts) / len(pts), "visible": True}
-    nose = keypoints[_NOSE]
-    if nose["conf"] >= conf_thr:
-        return {"cx": nose["x"], "cy": nose["y"], "visible": True}
-    return {"cx": 0.5, "cy": 0.5, "visible": False}
-
-
-class _DryMotor:
-    """--dry-run용 모터 스텁. lgpio/실모터 없이 개발 PC에서 오차→목표각 파이프라인만
-    확인하기 위한 것. move_to를 '즉시 도달'로 가정해 current_position이 마지막
-    목표각을 그대로 돌려준다 (실모터의 가감속/지연은 재현하지 않음 — 어디까지나
-    좌표→각도 계산과 데드존/선정 로직을 PC에서 돌려보기 위한 용도)."""
-
-    def __init__(self) -> None:
-        self._pan = 0.0
-
-    def enable(self) -> None: ...
-    def home(self) -> None: self._pan = 0.0
-    def move_to(self, pan_deg: float, tilt_deg: float) -> None: self._pan = pan_deg
-    def current_position(self) -> tuple[float, float]: return (self._pan, 0.0)
-    def close(self) -> None: ...
-    def __enter__(self) -> "_DryMotor": return self
-    def __exit__(self, *exc) -> None: ...
-
-
-def _open_motor(dry_run: bool):
-    """실모터(MotorController) 또는 드라이런 스텁을 연다. MotorController import를
-    이 함수 안으로 미룬 이유: 그 모듈은 최상단에서 lgpio를 import하는데, 개발
-    PC(lgpio 없음)에서 --dry-run으로 돌릴 때 최상단 import면 스크립트가 아예
-    뜨질 못하기 때문이다."""
-    if dry_run:
-        print("[motor] DRY-RUN — 실제 모터를 구동하지 않습니다 (각도 계산만).")
-        return _DryMotor()
-    from hardware.motor_controller import MotorController
-    return MotorController(CFG)
 
 
 def main() -> None:
@@ -122,7 +70,7 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
     # ── 제어 파라미터 (실험이라 시작값은 임의 — 실기에서 튜닝) ────────────────
-    p.add_argument("--gain", type=float, default=0.3,
+    p.add_argument("--gain", type=float, default=0.2,
                    help="비례 게인. 오차각의 몇 배를 현재각에 더할지 (기본 0.3). "
                         "방향 미검증 초기엔 0.3 권장, 진동하면 낮출 것")
     p.add_argument("--deadzone", type=float, default=1.0,
@@ -170,22 +118,12 @@ def main() -> None:
         threading.Thread(target=web_srv.serve_forever, daemon=True).start()
         print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
 
-    # PoseTracker의 3부위 슬롯 중 'upper'에 우리가 계산한 가슴점을 실어 재사용한다
-    # (miss 유예 + 재획득 즉시 점프 로직을 그대로 활용 — 요구사항 5의 "몇 프레임은
-    #  마지막 위치로 버티다, 계속 안 보이면 상실" 동작이 이걸로 그냥 나온다).
-    _invisible = {"cx": 0.5, "cy": 0.5, "visible": False}
-
-    prev_center: tuple[float, float] | None = None  # 대상 교체 판정용 (verify_movenet 패턴)
-    last_sent = 0.0                                  # 마지막으로 모터에 보낸 팬 목표각 (데드존 기준)
-    lost = True                                      # 현재 목표 상실(대기) 상태인가
-    fps_hist: list[float] = []
-    t_prev = time.time()
-    last_log = time.time()
-
     print("\n[verify_track] 팬 추적 시작 — 카메라를 팬 헤드에 얹은 상태를 가정합니다.")
     print(f"  gain={args.gain}  deadzone={args.deadzone}°  target_cx={args.target_cx}  "
           f"limit=±{args.limit}°  invert={args.invert}")
-    
+
+    # 단독 실행 시에는 아무도 set하지 않는 stop_event — while True와 동일하게 동작.
+    stop_event = threading.Event()
     motor_cm = _open_motor(args.dry_run)
     try:
         with motor_cm as mc:
@@ -193,112 +131,8 @@ def main() -> None:
             mc.home()  # 현재 물리 위치 = 팬 0°. 시작 위치에 마커를 붙여두면 대조에 편함
             print("[motor] 현재 위치를 팬 0°로 설정 (임시 호밍).")
 
-            while True:
-                t0 = time.time()
-                frame = _read_frame(cam, backend)
-                if frame is None:
-                    if args.web and web_state:
-                        web_state.update_stall(["no frames from the camera.",
-                                                "try --rpicam, or check camera wiring."])
-                    time.sleep(0.03)
-                    continue
-
-                people = detector.infer(frame)["people"]
-
-                # 다중 인원 중 1인 선정 (최대 bbox + 히스테리시스). 대상이 다른
-                # 사람으로 교체되면 스무딩 리셋해 조준점이 허공을 미끄러지지 않게 함.
-                target_idx = (
-                    select_target([pp["keypoints"] for pp in people],
-                                  conf_thr=args.conf, prev_center=prev_center)
-                    if people else None
-                )
-
-                if target_idx is not None:
-                    kps = people[target_idx]["keypoints"]
-                    new_center = person_center(kps, conf_thr=args.conf)
-                    if (prev_center is not None and new_center is not None
-                            and ((new_center[0] - prev_center[0]) ** 2
-                                 + (new_center[1] - prev_center[1]) ** 2) ** 0.5
-                            > DEFAULT_MATCH_RADIUS):
-                        tracker.reset()
-                    chest = chest_point(kps, args.conf)
-                    regions = {"head": _invisible, "upper": chest, "lower": _invisible}
-                    prev_center = new_center
-                    tracker_input = {"detected": True, "regions": regions}
-                else:
-                    tracker_input = {"detected": False,
-                                     "regions": {"head": _invisible, "upper": _invisible,
-                                                 "lower": _invisible}}
-
-                chest_s = tracker.update(tracker_input)["upper"]
-
-                # ── 피드백: 오차각 → 현재각에 누적 → 데드존 → 모터 ────────────────
-                cur_pan = mc.current_position()[0]
-                err_deg = None
-                if chest_s["visible"]:
-                    # 목표 재획득 → 대기 상태 해제
-                    if lost:
-                        print(f"\n[track] 목표 재획득 — 추적 재개 (idx={target_idx})")
-                        lost = False
-                    # (cx − target_cx)로 오차를 잡아 목표점을 화면 중앙이 아닌
-                    # target_cx로 맞출 수 있게 한다 (카메라/바람축 오프셋 흡수용).
-                    err_cx = chest_s["cx"] - (args.target_cx - 0.5)
-                    err_deg = sign * compute_pan_angle(err_cx, fov_h)
-                    raw_target = cur_pan + args.gain * err_deg
-                    raw_target = clamp_angle(raw_target, -args.limit, args.limit)
-                    gated = apply_deadzone(raw_target, last_sent, args.deadzone)
-                    if gated != last_sent:
-                        mc.move_to(gated, 0.0)  # 팬만 — 틸트는 홈(0°)에 고정
-                        last_sent = gated
-                else:
-                    # 요구사항 5: PoseTracker가 miss_thr 프레임 동안은 마지막 위치를
-                    # 유지(visible=True)하며 그쪽으로 계속 조준하고, 그 뒤에도 안
-                    # 보이면 여기로 떨어져 '목표 상실'을 1회 출력하고 대기한다.
-                    # 대기 중엔 모터를 움직이지 않고 제자리를 지킨다. 다시 사람이
-                    # 잡히면 위 분기에서 자동으로 추적을 재개한다.
-                    if not lost:
-                        print("\n[track] 목표 상실 → 대기 (카메라에 사람이 잡히면 재개)")
-                        lost = True
-
-                # ── FPS/수렴 로그 (README: 파이프라인 단계 추가 시 측정 코드 동봉) ──
-                dt = time.time() - t_prev
-                t_prev = time.time()
-                fps_hist.append(1.0 / dt if dt > 0 else 0.0)
-                if len(fps_hist) > 30:
-                    fps_hist.pop(0)
-                fps = sum(fps_hist) / len(fps_hist)
-
-                if time.time() - last_log >= 1.0:
-                    err_s = f"{err_deg:+6.2f}" if err_deg is not None else "  --  "
-                    print(f"\r[{time.strftime('%H:%M:%S')}] "
-                          f"people={len(people)} target={target_idx if target_idx is not None else '-':<3} "
-                          f"{'LOST' if lost else 'TRACK'}  "
-                          f"err={err_s}°  pan_cur={cur_pan:+7.2f}° pan_cmd={last_sent:+7.2f}°  "
-                          f"fps={fps:4.1f}  ", end="", flush=True)
-                    last_log = time.time()
-
-                if not args.no_window or args.web:
-                    vis = draw_pose(frame, people, target_idx)
-                    h, w = vis.shape[:2]
-                    tx = int(args.target_cx * w)
-                    cv2.line(vis, (tx, 0), (tx, h), (0, 210, 230), 1)  # 목표 x 세로선
-                    if chest_s["visible"]:
-                        cx, cy = int(chest_s["cx"] * w), int(chest_s["cy"] * h)
-                        cv2.circle(vis, (cx, cy), 14, (0, 200, 60), 3)  # 가슴 조준점
-                        cv2.line(vis, (cx, cy), (tx, cy), (0, 200, 60), 2)  # 오차 벡터
-                    status = "LOST (standby)" if lost else f"TRACK err={err_deg:+.1f}deg"
-                    cv2.putText(vis, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.7, (0, 210, 230), 2)
-                    cv2.putText(vis, f"pan_cmd {last_sent:+.1f}deg  fps {fps:.1f}",
-                                (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 200, 0), 2)
-                    if args.web and web_state:
-                        web_state.update(vis)
-                    if not args.no_window:
-                        cv2.imshow("Target Fan | Pan Tracking", vis)
-                        if (cv2.waitKey(1) & 0xFF) == ord("q"):
-                            break
-                if args.no_window:
-                    time.sleep(max(0.0, 0.02 - (time.time() - t0)))
+            run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
+                             fov_h, sign, web_state=web_state)
 
     except KeyboardInterrupt:
         print("\n[verify_track] Ctrl+C 중단")

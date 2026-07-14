@@ -12,8 +12,9 @@ motor_controller.py 본구현(논블로킹) 이후 남은 결정·검증 사항.
       대안: TMC2209 UART 모드의 StallGuard로 센서리스 호밍 가능한지 검토.
 - [ ] **회전 금지 구역(HW deadzone)**: 시스템 조립 후 배선/프레임 간섭으로
       회전하면 안 되는 각도 구역이 생긴다 (모터 자체 제약이 아님 — 조립 후
-      확정됨). 확정되면 config에 min/max 각도로 추가하고 control 쪽
-      clamp_angle()에 물릴 것. motor_controller는 clamp된 값이 들어온다고 가정.
+      확정됨). 확정 전 보수적 임시값을 config "limits"에 넣어둠 (pan ±100°,
+      tilt ±15°) — control 쪽 clamp_angle()에 물려서 사용 중이며, 확정 시 값만
+      갱신하면 된다. motor_controller는 clamp된 값이 들어온다고 가정.
 - [ ] **유휴 시 EN disable 정책**: EN 공유(CNC v3 쉴드 구조)는 확정 — 운용 중에는
       켜둔 채 STEP/DIR로만 축별 제어 (config.py "pins" 주석 참고). 다만 enable
       상태에서는 정지 중에도 유지 전류가 흘러 드라이버/모터가 발열하므로, 장시간

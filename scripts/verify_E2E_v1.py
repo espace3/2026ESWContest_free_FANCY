@@ -15,6 +15,12 @@ scripts/verify_E2E_v1.py - BLE 타겟 모드 → 팬/틸트 추적 루프 연동
 백엔드는 아무도 안 읽는 동안 파이프가 막혀 캡처 자체가 멎어버리는 게 실기로
 확인됐다(기본 모드로 쉬다가 타겟 모드로 돌아오면 화면이 멈춘 채 그대로).
 
+cv2 창은 추적 스레드가 직접 그리지 않는다 — HighGUI(GTK)는 처음 창을 만든
+스레드에 묶여서, 세션 스레드가 imshow를 부르면 두 번째 세션부터 얼어붙는다
+(실기 확인). 대신 추적 루프는 web_state에 프레임만 밀어 넣고, 프로세스 시작 때
+만든 _window_viewer 전용 스레드가 창을 전담한다. --web을 함께 켜면 같은
+프레임을 브라우저(http://<호스트>:8090/)로도 볼 수 있다.
+
 설치: verify_ble.py, verify_track_pan/tilt/pantilt.py의 설치 안내를 합친 것과 동일
     (bluez_peripheral --pre, tflite-runtime, opencv-python 등).
 
@@ -41,6 +47,7 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 # 레포 루트 + scripts 디렉터리를 path에 추가 (config/vision/control + 카메라 백엔드 재사용)
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -118,9 +125,9 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
         raise RuntimeError("[E2E] 카메라를 열 수 없습니다 (재시도 소진)")
 
     def _release_cam(cam, backend):
+        # cv2 창 정리는 여기서 하지 않는다 — GUI 호출은 전용 뷰어 스레드가 전담
+        # (세션 스레드에서 cv2 GUI를 부르면 다음 세션에서 얼어붙음, 실기 확인).
         _release_camera(cam, backend)
-        if not args.no_window:
-            cv2.destroyAllWindows()
         # 다음 세션이 바로 재오픈해도 커널/libcamera가 자원을 다 놓을 시간을 준다.
         time.sleep(0.3)
 
@@ -168,6 +175,28 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
     return _run
 
 
+def _window_viewer(web_state, stop_event) -> None:
+    """cv2 창 표시 전담 스레드 (프로세스에서 유일하게 cv2 GUI를 부르는 곳).
+
+    cv2 HighGUI(GTK)는 처음 창을 만든 스레드에 묶여서, 추적 세션 스레드가
+    직접 imshow를 부르면 두 번째 세션부터 창이 안 뜨고 루프까지 얼어붙는다
+    (실기 확인). 그래서 추적 루프는 _WebStreamState에 프레임(JPEG)만 밀어
+    넣고, 프로세스 시작 때 만든 이 스레드 하나가 창의 생성·표시·파괴를
+    전부 전담한다 — 세션이 몇 번 재시작되든 GUI 스레드는 항상 같다.
+    """
+    title = "ESW E2E"
+    last = None
+    while not stop_event.is_set():
+        jpg = web_state.latest()
+        if jpg and jpg is not last:
+            frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+            if frame is not None:
+                cv2.imshow(title, frame)
+            last = jpg
+        cv2.waitKey(30)  # GUI 이벤트 펌프 겸 표시 주기 (~33fps 상한)
+    cv2.destroyAllWindows()
+
+
 class _TrackingSupervisor:
     """BLE 전원/모드 write에 맞춰 추적 루프를 백그라운드 스레드로 시작/정지한다.
 
@@ -176,8 +205,9 @@ class _TrackingSupervisor:
     (정지 자체는 non-blocking — BLE 콜백을 오래 막지 않음).
     """
 
-    def __init__(self, run_fn) -> None:
+    def __init__(self, run_fn, web_state=None) -> None:
         self._run_fn = run_fn
+        self._web_state = web_state
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._power_on = False
@@ -195,6 +225,10 @@ class _TrackingSupervisor:
             print("\n[E2E] 추적 스레드가 예외로 종료됨:")
             traceback.print_exc()
         print("[E2E] 추적 스레드 종료")
+        if self._web_state:
+            # 창/웹 화면이 마지막 프레임에 얼어 보이지 않게 대기 안내로 교체.
+            self._web_state.update_stall(["tracking stopped",
+                                          "switch to target mode to resume"])
 
     def _apply(self) -> None:
         if self._target_active():
@@ -339,6 +373,16 @@ def main() -> None:
     p.add_argument("--web-fps", type=float, default=20.0)
     args = p.parse_args()
 
+    # 창을 원했는지 기억해두고, 추적 세션 스레드에서는 imshow가 절대 안 불리게
+    # no_window를 강제한다. 창은 _window_viewer 전용 스레드가 대신 그린다
+    # (프레임 전달 통로로 web_state를 재사용하므로 args.web을 켠다 —
+    #  HTTP 서버는 사용자가 --web을 명시한 경우에만 띄운다).
+    local_window = not args.no_window
+    serve_http = args.web
+    args.no_window = True
+    if local_window:
+        args.web = True
+
     if not Path(args.model).exists():
         print(f"[ERROR] 모델 없음: {args.model}")
         sys.exit(1)
@@ -352,12 +396,19 @@ def main() -> None:
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
     tracker = PoseTracker()
 
-    web_srv = web_state = None
+    web_srv = web_state = viewer_thread = None
+    viewer_stop = threading.Event()
     if args.web:
         web_state = _WebStreamState(args.web_quality, args.web_fps)
-        web_srv = _ThreadedHTTP((args.web_host, args.web_port), _make_handler(web_state))
-        threading.Thread(target=web_srv.serve_forever, daemon=True).start()
-        print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
+        if serve_http:
+            web_srv = _ThreadedHTTP((args.web_host, args.web_port), _make_handler(web_state))
+            threading.Thread(target=web_srv.serve_forever, daemon=True).start()
+            print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
+        if local_window:
+            viewer_thread = threading.Thread(target=_window_viewer,
+                                             args=(web_state, viewer_stop), daemon=True)
+            viewer_thread.start()
+            print("[E2E] 로컬 창 뷰어 시작 (전용 GUI 스레드)")
 
     motor_cm = _open_motor(args.dry_run)
     try:
@@ -367,7 +418,7 @@ def main() -> None:
             print("[motor] 현재 위치를 0°로 설정 (임시 호밍).")
 
             run_fn = _make_runner(args.axis, detector, tracker, mc, args, web_state)
-            supervisor = _TrackingSupervisor(run_fn)
+            supervisor = _TrackingSupervisor(run_fn, web_state=web_state)
 
             print(f"[E2E] axis={args.axis} — BLE 타겟 모드(0x02/0x03) 명령 대기 중.")
             try:
@@ -385,7 +436,9 @@ def main() -> None:
     finally:
         if web_srv:
             web_srv.shutdown(); web_srv.server_close()
-        cv2.destroyAllWindows()
+        viewer_stop.set()
+        if viewer_thread:
+            viewer_thread.join(timeout=3)  # destroyAllWindows는 뷰어 스레드 몫
         print("\n[E2E] 종료")
 
 

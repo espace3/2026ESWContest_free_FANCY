@@ -17,8 +17,13 @@ apps/ESW_BLE_app/docs/ble_protocol.md 를 따릅니다 (변경 시 함께 갱신
     sudo usermod -aG bluetooth $USER   # system dbus 접근 권한 (재로그인 필요)
 
 실행:
-    bluetoothctl power on            # 어댑터 켜기 (기본 on)
-    python3 scripts/verify_ble.py    # SSH 포그라운드 실행, Ctrl+C 종료
+    bluetoothctl power on             # 어댑터 켜기 (기본 on)
+    python3 scripts/verify_ble.py     # sudo 불필요, SSH 포그라운드 실행, Ctrl+C 종료
+
+    ⚠ 커널 6.18(예: 6.18.34+rpt-rpi-2712)에는 이름+128-bit 커스텀 UUID를
+    함께 광고하면 org.bluez.Error.Failed로 실패하는 회귀 버그가 있다
+    (bluetoothctl로도 재현됨, 코드 문제 아님). 6.12 계열로 다운그레이드하면
+    정상 동작한다 (/boot/firmware/config.txt의 kernel=/initramfs 지정).
 
 검증:
     Windows 앱(또는 nRF Connect)에서 ESW-FAN 스캔 → 연결 → write

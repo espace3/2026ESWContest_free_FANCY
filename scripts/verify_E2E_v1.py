@@ -57,7 +57,7 @@ from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 from tracking_core import (_open_motor, run_pan_tracking, run_tilt_tracking,
                            run_pantilt_tracking)
-from verify_movenet import (_open_camera, _release_camera,
+from verify_movenet import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
 # ── 프로토콜 (ble_protocol.md / verify_ble.py와 일치해야 함) ──
@@ -89,21 +89,32 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
     남는다 — 매번 새로 열면 이 문제를 피한다.
     """
     def _open_cam():
-        """카메라를 연다. 방금 release한 직후 재오픈하면 커널/libcamera가 이전
-        세션의 자원을 아직 다 안 놓아준 상태라 실패할 수 있어 잠깐 재시도한다.
+        """카메라를 열고 **첫 프레임까지 실제로 오는지** 확인한 뒤 반환한다.
 
-        `_open_camera`는 rpicam→picamera2→OpenCV까지 전부 실패하면
-        `sys.exit(1)`을 부르는데, 지금은 메인 스레드가 아니라 이 추적
-        스레드 안에서 실행되므로 그 SystemExit는 프로세스 전체가 아니라
-        이 스레드만 조용히 죽인다 — 화면도 안 뜨고 에러도 안 보이는 것처럼
-        보이는 원인이었다. 여기서 명시적으로 잡아서 재시도/로그를 남긴다.
+        재오픈이 실패하는 두 가지 조용한 경로를 모두 잡는다:
+        - `_open_camera`는 전부 실패하면 `sys.exit(1)`을 부르는데, 백그라운드
+          스레드 안의 SystemExit는 그 스레드만 조용히 죽인다 → 잡아서 재시도.
+        - rpicam-vid는 Popen이 성공해도 카메라를 못 잡으면(이전 세션 자원 해제
+          지연 등) 곧바로 죽는다(stderr는 버려져 에러도 안 보임). 이러면
+          추적 루프가 frame=None만 무한 반복하며 창도 모터도 반응이 없다 —
+          그래서 오픈 성공 판정을 "첫 프레임 수신"으로 한다.
         """
         for attempt in range(1, 4):
             try:
-                return _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
+                cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
             except SystemExit:
-                print(f"[E2E] 카메라 오픈 실패 ({attempt}/3) — 0.5s 후 재시도")
-                time.sleep(0.5)
+                print(f"[E2E] 카메라 오픈 실패 ({attempt}/3) — 1s 후 재시도")
+                time.sleep(1.0)
+                continue
+            deadline = time.time() + 4.0
+            while time.time() < deadline:
+                if _read_frame(cam, backend) is not None:
+                    print(f"[E2E] 카메라 준비 완료 (backend={backend})")
+                    return cam, backend
+                time.sleep(0.1)
+            print(f"[E2E] 카메라가 프레임을 못 줌 ({attempt}/3) — 닫고 재오픈")
+            _release_camera(cam, backend)
+            time.sleep(1.0)
         raise RuntimeError("[E2E] 카메라를 열 수 없습니다 (재시도 소진)")
 
     def _release_cam(cam, backend):
@@ -175,6 +186,16 @@ class _TrackingSupervisor:
     def _target_active(self) -> bool:
         return self._power_on and self._mode in _TARGET_MODES
 
+    def _thread_main(self, stop_event) -> None:
+        """예외로 죽으면 원인이 조용히 사라지지 않게 traceback을 남긴다."""
+        try:
+            self._run_fn(stop_event)
+        except Exception:
+            import traceback
+            print("\n[E2E] 추적 스레드가 예외로 종료됨:")
+            traceback.print_exc()
+        print("[E2E] 추적 스레드 종료")
+
     def _apply(self) -> None:
         if self._target_active():
             # 직전 스레드가 (정지 요청을 받았지만 루프 맨 위 체크 지점까지 아직
@@ -185,9 +206,13 @@ class _TrackingSupervisor:
             if self._thread and self._thread.is_alive():
                 print("[E2E] 이전 추적 스레드 정리 중...")
                 self._stop_event.set()
-                self._thread.join(timeout=5)
+                self._thread.join(timeout=15)
+                if self._thread.is_alive():
+                    print("[E2E] 이전 스레드가 아직 안 끝남 — 이번 시작은 건너뜀 "
+                          "(모드를 다시 토글해 보세요)")
+                    return
             self._stop_event.clear()
-            self._thread = threading.Thread(target=self._run_fn,
+            self._thread = threading.Thread(target=self._thread_main,
                                             args=(self._stop_event,), daemon=True)
             self._thread.start()
             print("[E2E] 추적 시작")

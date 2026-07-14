@@ -101,6 +101,8 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
                                  fov_h, sign, web_state=web_state)
             finally:
                 _release_camera(cam, backend)
+                if not args.no_window:
+                    cv2.destroyAllWindows()
 
         return _run
 
@@ -116,6 +118,8 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
                                   fov_v, sign, aim_key, web_state=web_state)
             finally:
                 _release_camera(cam, backend)
+                if not args.no_window:
+                    cv2.destroyAllWindows()
 
         return _run
 
@@ -130,6 +134,8 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
                                  fov_h, fov_v, sign_pan, sign_tilt, web_state=web_state)
         finally:
             _release_camera(cam, backend)
+            if not args.no_window:
+                cv2.destroyAllWindows()
 
     return _run
 

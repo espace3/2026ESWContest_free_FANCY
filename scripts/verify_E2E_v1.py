@@ -37,6 +37,7 @@ import argparse
 import asyncio
 import sys
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -88,7 +89,29 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
     남는다 — 매번 새로 열면 이 문제를 피한다.
     """
     def _open_cam():
-        return _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
+        """카메라를 연다. 방금 release한 직후 재오픈하면 커널/libcamera가 이전
+        세션의 자원을 아직 다 안 놓아준 상태라 실패할 수 있어 잠깐 재시도한다.
+
+        `_open_camera`는 rpicam→picamera2→OpenCV까지 전부 실패하면
+        `sys.exit(1)`을 부르는데, 지금은 메인 스레드가 아니라 이 추적
+        스레드 안에서 실행되므로 그 SystemExit는 프로세스 전체가 아니라
+        이 스레드만 조용히 죽인다 — 화면도 안 뜨고 에러도 안 보이는 것처럼
+        보이는 원인이었다. 여기서 명시적으로 잡아서 재시도/로그를 남긴다.
+        """
+        for attempt in range(1, 4):
+            try:
+                return _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
+            except SystemExit:
+                print(f"[E2E] 카메라 오픈 실패 ({attempt}/3) — 0.5s 후 재시도")
+                time.sleep(0.5)
+        raise RuntimeError("[E2E] 카메라를 열 수 없습니다 (재시도 소진)")
+
+    def _release_cam(cam, backend):
+        _release_camera(cam, backend)
+        if not args.no_window:
+            cv2.destroyAllWindows()
+        # 다음 세션이 바로 재오픈해도 커널/libcamera가 자원을 다 놓을 시간을 준다.
+        time.sleep(0.3)
 
     if axis == "pan":
         fov_h = CFG["fov"]["h"]
@@ -100,9 +123,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
                 run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                                  fov_h, sign, web_state=web_state)
             finally:
-                _release_camera(cam, backend)
-                if not args.no_window:
-                    cv2.destroyAllWindows()
+                _release_cam(cam, backend)
 
         return _run
 
@@ -117,9 +138,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
                 run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                                   fov_v, sign, aim_key, web_state=web_state)
             finally:
-                _release_camera(cam, backend)
-                if not args.no_window:
-                    cv2.destroyAllWindows()
+                _release_cam(cam, backend)
 
         return _run
 
@@ -133,9 +152,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
             run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                                  fov_h, fov_v, sign_pan, sign_tilt, web_state=web_state)
         finally:
-            _release_camera(cam, backend)
-            if not args.no_window:
-                cv2.destroyAllWindows()
+            _release_cam(cam, backend)
 
     return _run
 

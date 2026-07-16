@@ -101,7 +101,7 @@ CFG: dict = {
             "gear_ratio": 92.6,
             "dir_for_positive": 0, # 정면 설정 완료 (2026-07-10)
             "f_start": 800,
-            "f_max": 10000,
+            "f_max": 6000,
             "ramp_segments": 12,
             "ramp_steps_per_seg": 60,
         },

@@ -326,12 +326,13 @@ class _RpicamVidCamera:
     _EOI = b"\xff\xd9"
     _MAX_BUF = 2_000_000  # 마커를 못 찾고 버퍼가 무한히 쌓이는 것 방지
 
-    def __init__(self, width: int, height: int, fps: int = 30) -> None:
+    def __init__(self, width: int, height: int, fps: int = 30, cam_idx: int = 0) -> None:
         import subprocess
         self.width = width
         self.height = height
         cmd = [
             "rpicam-vid",
+            "--camera", str(cam_idx),        # CSI 포트 선택 (cam0/cam1)
             "-t", "0",                       # 무제한 실행
             "--width", str(width),
             "--height", str(height),
@@ -346,7 +347,7 @@ class _RpicamVidCamera:
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
         )
         self._buf = bytearray()
-        print(f"[camera] rpicam-vid MJPEG ({width}x{height}@{fps}fps, pid={self.proc.pid})")
+        print(f"[camera] rpicam-vid MJPEG cam{cam_idx} ({width}x{height}@{fps}fps, pid={self.proc.pid})")
 
     def read_jpeg(self) -> bytes | None:
         """스트림에서 가장 최신의 완결된 JPEG 프레임(SOI~EOI)을 찾아 반환한다.
@@ -406,7 +407,7 @@ def _open_camera(force_opencv, cam_idx, use_rpicam=False):
     if use_rpicam:
         try:
             cam = _RpicamVidCamera(
-                ccfg["width"], ccfg["height"], ccfg.get("fps", 30))
+                ccfg["width"], ccfg["height"], ccfg.get("fps", 30), cam_idx=cam_idx)
             return cam, "rpicam"
         except Exception as e:
             print(f"[camera] rpicam-vid 실패 → OpenCV ({e})")
@@ -414,11 +415,11 @@ def _open_camera(force_opencv, cam_idx, use_rpicam=False):
     if not force_opencv:
         try:
             from picamera2 import Picamera2
-            pc = Picamera2()
+            pc = Picamera2(camera_num=cam_idx)
             pc.configure(pc.create_preview_configuration(
                 main={"format": "RGB888", "size": (ccfg["width"], ccfg["height"])}))
             pc.start(); time.sleep(0.5)
-            print(f"[camera] Picamera2 ({ccfg['width']}x{ccfg['height']})")
+            print(f"[camera] Picamera2 cam{cam_idx} ({ccfg['width']}x{ccfg['height']})")
             return pc, "picamera2"
         except Exception as e:
             print(f"[camera] Picamera2 실패 → OpenCV ({e})")
@@ -474,7 +475,8 @@ def main():
     parser.add_argument("--opencv", action="store_true")
     parser.add_argument("--rpicam", action="store_true",
                         help="rpicam-vid 서브프로세스로 카메라 캡처 (picamera2 미설치 시 사용)")
-    parser.add_argument("--cam", type=int, default=0)
+    parser.add_argument("--cam", type=int, default=0,
+                        help="카메라 인덱스 — CSI 케이블 포트(cam0/cam1) 또는 OpenCV 장치 번호")
     parser.add_argument("--no-window", action="store_true")
     parser.add_argument("--web", action="store_true")
     parser.add_argument("--web-host", default="0.0.0.0")

@@ -350,6 +350,7 @@ def main() -> None:
     p.add_argument("--no-restore", action="store_true", help="시작 시 원점 복원 생략")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
+    p.add_argument("--wide", action="store_true", help="Camera Module 3 Wide 렌즈 화각 사용")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
@@ -373,8 +374,9 @@ def main() -> None:
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
     cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
     tracker = PoseTracker()
+    _fov = CFG["fov_wide" if args.wide else "fov"]
     scenario = FullBodyScenario(
-        CFG["fov"]["h"], CFG["fov"]["v"],
+        _fov["h"], _fov["v"],
         args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
         gain=args.gain, gain_tilt=args.gain_tilt,
         invert_pan=args.invert, invert_tilt=args.invert_tilt,

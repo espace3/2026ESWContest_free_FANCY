@@ -65,12 +65,17 @@
 | 1 | **Windows 데스크톱 타깃**으로 앱 우선 개발 (UI 골격 + 스와이프 네비게이션) | 완료 |
 | 2 | Windows 앱 ↔ RPi **BLE 통신 검증** — 상세: [docs/ble_todo.md](docs/ble_todo.md), 프로토콜: [docs/ble_protocol.md](docs/ble_protocol.md) | 구현 완료, 실기 검증 대기 |
 | 3 | 스와이프형 모드 전환 등 UX 구체화 | 1차 적용, 개선 중 |
-| 4 | Android/iOS 빌드 및 플랫폼별 BLE 권한·동작 검증 | 예정 |
+| 4a | **Android** 빌드 + BLE 권한 설정 (`com.esw.fan`, APK 빌드 성공) | 설정 완료, 실기 검증 대기 |
+| 4b | **iOS** 사전 설정 — 가이드: [docs/ios_setup.md](docs/ios_setup.md) | 설정 완료, 맥북 확보 후 빌드 |
 
 > 최종 대상 플랫폼은 Android/iOS이지만, 개발·검증 편의를 위해
-> **Windows에서 먼저 만들고 BLE 통신을 실증**한 뒤 모바일로 확장한다.
-> 따라서 BLE 플러그인은 Windows를 지원하는 것(예: `flutter_blue_plus` + Windows 구현체,
-> `win_ble` 등)을 검토해 선정한다.
+> **Windows에서 먼저 만들고 BLE 통신을 실증**한 뒤 모바일로 확장했다.
+> BLE 플러그인은 Windows/Android/iOS를 한 API로 커버하는 **`universal_ble`**
+> 를 채택해, `lib/` 아래 Dart 코드는 플랫폼 분기 없이 동작한다.
+>
+> ⚠ **실기 필수**: BLE는 안드로이드 에뮬레이터·iOS 시뮬레이터 모두에서 동작하지
+> 않는다(가상 환경에 무선 장치 없음). 또한 Flutter 3.44는 **Android 7.0(API 24)
+> 이상**을 요구한다.
 
 ## 5. 저장소 구조
 
@@ -82,6 +87,7 @@ ESW_BLE_app/
 │   ├── 2026 ESW 제안서.pdf     ← 프로젝트 제안서 (원본 요구사항)
 │   ├── ble_protocol.md        ← BLE GATT 프로토콜 명세 (앱↔RPi 계약서)
 │   ├── ble_todo.md            ← BLE 통신 검증 체크리스트
+│   ├── ios_setup.md           ← 맥북/Xcode iOS 빌드 가이드 (서명·실기·트러블슈팅)
 │   └── development_log.md     ← 개발 진행 기록
 └── my_app/                    ← Flutter 앱 프로젝트
     ├── lib/main.dart          ← 앱 진입점 (현재 기본 템플릿 상태)

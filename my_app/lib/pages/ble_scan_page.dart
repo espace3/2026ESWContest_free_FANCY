@@ -86,6 +86,9 @@ class _BleScanPageState extends State<BleScanPage> {
       _log('스캔 중지 (발견 ${_devices.length}대)');
       return;
     }
+    // Android 12+는 BLUETOOTH_SCAN/CONNECT를 런타임에도 받아야 스캔이 된다.
+    // Windows/Linux/Web에서는 두 API 모두 항상 성공하므로 분기 없이 호출한다.
+    if (!await _ensurePermissions()) return;
     setState(() {
       _devices.clear();
       _scanning = true;
@@ -103,6 +106,25 @@ class _BleScanPageState extends State<BleScanPage> {
     } catch (e) {
       _log('스캔 시작 실패: $e');
       setState(() => _scanning = false);
+    }
+  }
+
+  /// 권한이 없으면 요청한다. 사용자가 거부하면 예외가 나므로 안내 후 false.
+  Future<bool> _ensurePermissions() async {
+    try {
+      if (!await UniversalBle.hasPermissions()) {
+        _log('블루투스 권한 요청...');
+        await UniversalBle.requestPermissions();
+      }
+      return true;
+    } catch (e) {
+      _log('블루투스 권한 거부됨: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('블루투스 권한이 필요합니다 — 설정에서 허용해 주세요')),
+        );
+      }
+      return false;
     }
   }
 

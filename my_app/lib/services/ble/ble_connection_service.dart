@@ -24,15 +24,23 @@ class BleConnectionService extends ChangeNotifier {
   String? get deviceName => _deviceName;
 
   Future<void> connect(BleDevice device) async {
-    await UniversalBle.connect(device.deviceId);
-    // Windows(WinRT)는 서비스 발견 전 write가 실패할 수 있어 연결 절차에 포함.
-    await UniversalBle.discoverServices(device.deviceId);
-    _deviceId = device.deviceId;
+    final id = device.deviceId;
+    try {
+      await _establish(id);
+    } catch (_) {
+      // 이전 실행이 정상 종료 못 해(앱이 백그라운드에서 OS에 강제 종료되는 등)
+      // RPi가 낡은 연결을 붙들고 있으면 첫 시도가 타임아웃날 수 있다.
+      // 반쯤 열린 연결을 정리하고 잠깐 뒤 1회 재시도해 흡수한다.
+      try {
+        await UniversalBle.disconnect(id);
+      } catch (_) {}
+      await Future.delayed(const Duration(seconds: 1));
+      await _establish(id); // 재시도도 실패하면 예외를 그대로 던져 호출부가 안내.
+    }
+    _deviceId = id;
     _deviceName = device.name;
     unawaited(_connectionSub?.cancel());
-    _connectionSub = UniversalBle.connectionStream(device.deviceId).listen((
-      connected,
-    ) {
+    _connectionSub = UniversalBle.connectionStream(id).listen((connected) {
       if (!connected) {
         _deviceId = null;
         _deviceName = null;
@@ -40,6 +48,12 @@ class BleConnectionService extends ChangeNotifier {
       }
     });
     notifyListeners();
+  }
+
+  Future<void> _establish(String id) async {
+    await UniversalBle.connect(id);
+    // Windows(WinRT)는 서비스 발견 전 write가 실패할 수 있어 연결 절차에 포함.
+    await UniversalBle.discoverServices(id);
   }
 
   Future<void> disconnect() async {

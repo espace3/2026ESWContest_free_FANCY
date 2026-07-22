@@ -18,7 +18,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _modeNames = ['기본 모드', '타겟 모드'];
   static const _switchDuration = Duration(milliseconds: 350);
 
@@ -33,13 +33,30 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _wasConnected = _ble.isConnected;
     _ble.addListener(_onConnectionChanged);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ble.removeListener(_onConnectionChanged);
     _pageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 앱을 최소화(back/home)하거나 종료할 때, **전원이 꺼져 있을 때만** BLE를
+    // 끊는다. 선풍기가 켜진 채 최소화한 경우는 연결을 유지해, 돌아왔을 때
+    // 매번 재연결하는 불편을 없앤다. 전원 OFF 상태에서 정리해두면 RPi가
+    // 죽은 연결을 붙들지 않아 다음 연결의 10초 타임아웃도 예방된다.
+    // (켜진 채 OS가 앱을 강제 종료하는 경우는 connect()의 자동 재시도가 흡수.)
+    // 화면 간 이동(스캔↔홈)은 lifecycle 이벤트가 아니라 영향 없다.
+    if ((state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached) &&
+        !_powerOn) {
+      _ble.disconnect();
+    }
   }
 
   void _onConnectionChanged() {

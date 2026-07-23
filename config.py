@@ -71,7 +71,7 @@ CFG: dict = {
     # 추후 결정 — hardware/TODO.md).
     # TODO: 릴레이 모듈 핀은 배선 확정 시 추가. 추측으로 채워 넣지 말 것.
     "pins": {
-        "pan":  {"EN": 17, "STEP": 27, "DIR": 22},   # X축: 직결 (감속기 없음)
+        "pan":  {"EN": 17, "STEP": 27, "DIR": 22},   # X축: 유성기어 (유효비 확인 필요)
         "tilt": {"EN": 17, "STEP": 20, "DIR": 21},   # Y축: 웜기어 (유효비 92.6 실측)
     },
 
@@ -88,12 +88,12 @@ CFG: dict = {
         # 임시값 — 실기에서 "화면 오른쪽/아래 = +각도" 방향과 일치하는지 확인 후
         # 필요하면 뒤집을 것 (hardware/TODO.md).
         "pan": {
-            "gear_ratio": 1,
-            "dir_for_positive": 1, # 확인 완료 (2026-07-09)
-            "f_start": 700,
-            "f_max": 2000,
+            "gear_ratio": 100,     # 유성 기어 모터로 변경 (2026-07-23), 원래 1 (아래 주석 값은 1 기준)
+            "dir_for_positive": 1, # 확인 필요 (위의 이유와 동일)
+            "f_start": 800,        # 700
+            "f_max": 6000,         # 2000
             "ramp_segments": 12,
-            "ramp_steps_per_seg": 90,
+            "ramp_steps_per_seg": 60, # 90
         },
         "tilt": {
             # 92.6 = 실측 (라벨은 100). 무부하 벤치 측정값 — 부하(팬 헤드)

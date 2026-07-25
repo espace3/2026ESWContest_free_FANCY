@@ -89,7 +89,7 @@ CFG: dict = {
         # 필요하면 뒤집을 것 (hardware/TODO.md).
         "pan": {
             "gear_ratio": 100,     # 유성 기어 모터로 변경 (2026-07-23), 원래 1 (아래 주석 값은 1 기준)
-            "dir_for_positive": 1, # 확인 필요 (위의 이유와 동일)
+            "dir_for_positive": 0, # 확인 완료
             "f_start": 800,        # 700
             "f_max": 6000,         # 2000
             "ramp_segments": 12,
@@ -112,8 +112,8 @@ CFG: dict = {
     # 보수적 임시값 — 특히 tilt는 축 방향·기구 한계 미실측이라 좁게 잡았다.
     # control 쪽 clamp_angle()에 물려서 쓴다 (motor_controller는 재검사하지 않음).
     "limits": {
-        "pan":  {"min": -100.0, "max": 100.0},
-        "tilt": {"min": -30.0,  "max": 15.0},
+        "pan":  {"min": -200.0, "max": 200.0},
+        "tilt": {"min": -15.0,  "max": 15.0},
     },
 
     # ── 거리 추정 (어깨 너비 기반 — control/control_signal_generator.py) ─────

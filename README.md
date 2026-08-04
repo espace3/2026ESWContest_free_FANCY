@@ -27,6 +27,7 @@ control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
   fullbody_scenario.py         # 전신(머리→발) 추적 시나리오 상태기계: 스캔→웨이포인트 순찰, 이동 재획득(재조준/어깨 탐색), 가림·틸트 리밋 처리
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
   motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 논블로킹 (축별 워커 스레드, 최신 목표 선점)
+  relay_controller.py  # 선풍기 풍속 릴레이(TS0011) 구동 — 논블로킹 (break-before-make 워커, 전부 오픈=정지)
   TODO.md              # 하드웨어 관련 미결 결정·실기 검증 항목
 scripts/             # 단계별 수동 검증 스크립트
   verify_movenet.py     # 1단계: 카메라 캡처 + 시각화/웹스트림으로 포즈 추정 확인
@@ -39,6 +40,8 @@ scripts/             # 단계별 수동 검증 스크립트
   verify_track_pantilt.py # 3단계: 팬+틸트 동시 추적 닫힌 루프 (어깨 중심 지속 조준 — 한 관측=한 명령)
   verify_fulltrack.py   # 4단계: 팬+틸트 전신 추적 시나리오 (fullbody_scenario 검증, 원점 복귀/복원 포함)
   verify_ble.py         # BLE 단계: bluez_peripheral GATT 서버 print 검증 (ESW-FAN 광고, 앱 write 수신 확인)
+  verify_relay.py       # 릴레이 단계: FanRelay 단독 실기 검증 (정지→미풍→약풍→강풍 순환, 극성/guard 확인)
+  verify_ble_v2.py      # BLE 단계 v2: verify_ble.py + WIND/POWER write를 FanRelay로 실구동 (차이점은 파일 상단)
   verify_E2E_v1.py      # BLE 단계 v1: 앱 "타겟 모드" write → tracking_core 축별 추적 루프
                          # 시작/정지 연동 (--axis pan|tilt|pantilt). 부위별 스캔은 미포함(4단계 몫).
 config.py            # 전체 설정값 (CFG 딕셔너리)
@@ -82,9 +85,12 @@ python scripts/verify_movenet.py --noir-sim                         # NoIR 야�
   지금은 `vision/pose_estimator.py`, `vision/target_selector.py`, `vision/pose_tracker.py`,
   `control/control_signal_generator.py`가 이 원칙을 따릅니다.
 - **하드웨어 호출 전용 모듈** (계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만 함):
-  릴레이 제어, 모터 제어, BLE 서버. `hardware/motor_controller.py`는 lgpio 기반
-  논블로킹 구현이 완료됐고 (핀·구동 파라미터는 `config.py`의 실측값), 릴레이·BLE는
-  배선/프로토콜 확정 후 추가합니다.
+  릴레이 제어, 모터 제어, BLE 서버. `hardware/motor_controller.py`(팬틸트 스테퍼)와
+  `hardware/relay_controller.py`(풍속 릴레이 — 2026-08-04 배선 확정, 물리버튼 없이
+  릴레이 직접 탭 단속)는 lgpio 기반 논블로킹 구현이 완료됐습니다 (핀·파라미터는
+  `config.py`, 실측 잔여는 `hardware/TODO.md`). BLE 서버는 현재 scripts/ 검증
+  단계이며(`verify_ble_v2.py`), 4단계 통합 시 상위 통합부가 gpiochip 핸들을 한 번
+  열어 모터/릴레이에 공유합니다.
 - 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`처럼 순수 함수로 각도를 계산하고,
   `motor_controller.move_to(angle)`이 실제 GPIO 호출을 전담합니다. 이렇게 분리해두면
   모터 드라이버를 바꾸거나 계산 버그를 찾을 때 서로 영향 없이 수정·검증할 수 있습니다.

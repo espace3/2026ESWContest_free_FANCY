@@ -9,8 +9,8 @@ hardware/motor_controller.py 쪽 몫입니다.
 
 주의: 선풍기 풍속(바람 세기)은 이 모듈이 다루는 대상이 아닙니다 — 풍속은
 부위(머리/상체/하체)별로 사용자가 앱에서 BLE로 직접 지정하는 값이라 카메라
-거리 추정과 무관합니다 (그쪽은 나중에 hardware/relay_controller.py + BLE
-서버가 담당).
+거리 추정과 무관합니다 (그쪽은 hardware/relay_controller.py + BLE 서버가
+담당).
 """
 
 from __future__ import annotations

@@ -10,3 +10,4 @@ venv/
 .python_version/
 CLAUDE.md
 fulltrack_state.json
+docs/

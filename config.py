@@ -76,11 +76,8 @@ CFG: dict = {
     },
 
     # ── 스테퍼 구동 파라미터 (verify_motor.py + 실측 캘리브레이션) ────────────
-    # f_max 10000은 lgpio tx_pwm 하드리밋 (11000 지정 시 실행 안 됨 확인).
     # 스텝당 각도 = 360 / (steps_per_rev × microstep × gear_ratio)
-    #   pan ≈ 0.1125°, tilt ≈ 0.001167°
-    # 2026-07-09: tilt 축에 모터축 36°(=10.0회전 기대치) 명령 후 실제 회전수를
-    # 세어 10.0회전 확인 → steps_per_rev=200 × microstep=16 조합이 맞음을 확정.
+    #   pan ≈ 0.001125° (1:100 유성), tilt ≈ 0.001215°
     "stepper": {
         "steps_per_rev": 200,  # 모터 라벨 1.8°/STEP 확인 (2026-07-08)
         "microstep": 16,       # 실측

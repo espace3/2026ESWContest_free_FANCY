@@ -20,21 +20,24 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     (도중 취소하면 실제 송출된 스텝 수를 알 수 없어 위치 장부가 깨짐). 대신
     큐를 _LOOKAHEAD_S 이상 쌓지 않아 선점 반응 지연에 상한을 둔다.
 
-  - 목표 변경/정지 시퀀스 (급정지·급반전 금지 — 모터 보호):
+  - 목표 변경: 같은 방향이고 감속 여유가 남는 목표면 감속 없이 그대로 갈아탄다
+    (남은 거리가 늘면 램프도 더 오른다). 추적처럼 목표가 초당 수십 번 갱신되는
+    부하에서 매번 "전체 감속 → drain → 재가속"을 돌면 순항에 도달하지 못하고
+    저속 램프 구간만 오르내리는 것이 추적 저속의 주원인이었다 (2026-07-30 수정).
+    정지·역방향·종료(close)는 기존 시퀀스 그대로 (급정지·급반전 금지 — 모터 보호):
         현재 방향 감속 → 큐 완전 배출(drain) → [필요 시 DIR 변경] → 새 방향 가속
     DIR 변경을 drain 뒤로 미루는 이유: 큐에 남은 펄스가 바뀐 DIR로 송출되면
-    장부와 실제 위치가 어긋난다. 종료(close) 요청도 같은 감속 경로를 탄다.
-    TODO(개선 후보): 새 목표가 같은 방향 연장이면 지금은 감속 후 재가속한다
-    (단순화) — 추적이 끊겨 보이면 감속 생략하고 이어가는 로직 검토 (TODO.md).
+    장부와 실제 위치가 어긋난다.
 
   - 위치는 정수 스텝으로만 기록한다 (float 각도로 들고 있으면 반올림 오차
-    누적). 각도 환산은 deg_per_step 참고 — 1스텝 = pan 0.1125° / tilt ≈0.00121°.
+    누적). 각도 환산은 deg_per_step 참고 — 1스텝 = pan 0.001125°(1:100 유성) /
+    tilt ≈0.00121°(1:92.6 웜).
     큐잉 시점에 확정 기록하므로 current_position()은 이동 중 실제 로터보다
     최대 _LOOKAHEAD_S+감속 시간만큼 앞설 수 있고, idle이 되면 일치한다.
 
   - 짧은 이동(가속+감속 거리 미달)은 램프를 앞에서부터 잘라 쓰고, 아주 짧으면
-    램프 없이 f_start 저속으로만 보낸다. 실전 추적의 주력인 데드존 직후 잔이동
-    (pan 2~5° = 18~44스텝)이 이 경로를 탄다 — 몇 스텝까지 정확히/조용히
+    램프 없이 f_start 저속으로만 보낸다. 기어비 반영 후 이 경로는 pan 0.135°
+    (=2구간 120스텝) 미만의 잔이동만 탄다 — 몇 스텝까지 정확히/조용히
     움직이는지 실측 필요 (TODO.md).
 
 TODO — 남은 미결 (hardware/TODO.md 참고):
@@ -79,11 +82,11 @@ class _Axis:
         self.name = name
         self.step_pin = pins["STEP"]
         self.dir_pin = pins["DIR"]
-        # 1스텝당 각도: pan(직결) 360/3200 = 0.1125°, tilt(1:92.6 실측) ≈ 0.00121°
+        # 1스텝당 각도: pan(1:100 유성) ≈ 0.001125°, tilt(1:92.6 실측) ≈ 0.00121°
         self.deg_per_step = 360.0 / (spr * params["gear_ratio"])
         self.dir_for_positive = params["dir_for_positive"]
         self.f_start = params["f_start"]
-        # 램프 한 구간의 스텝 수: pan 40스텝 = 4.5°, tilt 60스텝 ≈ 0.073°
+        # 램프 한 구간의 스텝 수: 두 축 60스텝 — pan ≈ 0.0675°, tilt ≈ 0.073°
         self.seg_steps = params["ramp_steps_per_seg"]
         n_seg = params["ramp_segments"]
         # 첫 원소를 f_start 그대로 둬서 정지→기동 시 "f_start + 한 구간분" 만큼
@@ -165,44 +168,61 @@ class _Axis:
         while lgpio.tx_busy(self.h, self.step_pin, lgpio.TX_PWM):
             time.sleep(0.005)
 
+    def _retarget(self, sign: int, decel_reserve: int):
+        """선점 시 새 목표 판정. 진행 방향 그대로면서 감속 여유(decel_reserve)가
+        남는 목표면 (새 목표, 새 남은 스텝)을 반환 — 호출자는 감속 없이 그대로
+        이어 간다. 역방향·감속 여유 부족·종료 요청이면 None (감속 경로로)."""
+        with self.cond:
+            if self._quit:
+                return None
+            rest = (self.target_steps - self.pos_steps) * sign
+            if rest >= decel_reserve:
+                return self.target_steps, rest
+            return None
+
     def _execute(self, planned_target: int, delta: int) -> None:
-        """delta 스텝만큼 이동 (가속 → 순항 → 감속). 도중에 목표가 바뀌면
-        감속까지만 마치고 리턴한다 — 바깥 루프(_run)가 새 목표로 재계획하므로
-        방향 전환은 자연히 "감속 → drain → DIR 변경 → 역방향 가속" 순서가 된다.
-        리턴 시점에는 항상 큐가 비어 있고 장부 = 실제 위치다."""
+        """delta 스텝만큼 이동 (가속 → 순항 → 감속). 도중 목표 변경이 같은 방향
+        연장이면 감속 없이 갈아타고 계속 간다 — 남은 거리가 늘면 램프도 더 오른다
+        (2026-07-30, 추적 중 매번 전체 감속→재가속하던 churn 제거). 정지·역방향·
+        종료면 감속까지만 마치고 리턴한다 — 바깥 루프(_run)가 새 목표로 재계획
+        하므로 방향 전환은 자연히 "감속 → drain → DIR 변경 → 역방향 가속" 순서가
+        된다. remaining ≥ 감속분 불변식을 항상 유지하므로 감속이 (마지막으로
+        수락한) 목표를 넘는 일은 없고, 리턴 시점에는 항상 큐가 비어 있고
+        장부 = 실제 위치다."""
         sign = 1 if delta > 0 else -1
         dir_level = self.dir_for_positive if sign > 0 else 1 - self.dir_for_positive
         lgpio.gpio_write(self.h, self.dir_pin, dir_level)
         time.sleep(_DIR_SETUP_S)
 
         remaining = abs(delta)
-        # 이동량에 맞춰 램프를 앞에서부터 k구간만 쓴다. k=0(짧은 이동)이면 램프
-        # 없이 f_start 저속으로만 보낸다 — verify_motor.py의 "램프 겹침" 거부 대신
-        # 어떤 이동량이든 처리되도록 한 것.
-        k = min(len(self.ramp), remaining // (2 * self.seg_steps))
         climbed: list[int] = []  # 올라간 램프 단계 — 감속 시 역순 재생
-        preempted = False
 
-        for f in self.ramp[:k]:  # 가속
-            self._emit(f, self.seg_steps, sign)
-            climbed.append(f)
-            remaining -= self.seg_steps
-            if self._preempted(planned_target):
-                preempted = True
-                break
-
-        if not preempted:  # 순항 — 감속에 쓸 스텝(decel_reserve)은 남겨둔다
-            cruise_f = climbed[-1] if climbed else self.f_start
+        while True:
             decel_reserve = len(climbed) * self.seg_steps
-            chunk = max(1, int(cruise_f * _CHUNK_S))
-            while remaining > decel_reserve:
-                self._emit(cruise_f, min(chunk, remaining - decel_reserve), sign)
-                remaining = max(decel_reserve, remaining - chunk)
-                if self._preempted(planned_target):
-                    preempted = True
-                    break
+            if (len(climbed) < len(self.ramp)
+                    and remaining >= decel_reserve + 2 * self.seg_steps):
+                # 가속 — 오른 뒤에도 감속분이 남을 때만 한 구간 오른다
+                f = self.ramp[len(climbed)]
+                self._emit(f, self.seg_steps, sign)
+                climbed.append(f)
+                remaining -= self.seg_steps
+            elif remaining > decel_reserve:
+                # 순항 — 감속분은 남겨둔다. 짧은 이동(램프 미진입)은 f_start
+                # 저속으로만 나간다 (어떤 이동량이든 처리).
+                cruise_f = climbed[-1] if climbed else self.f_start
+                n = min(max(1, int(cruise_f * _CHUNK_S)), remaining - decel_reserve)
+                self._emit(cruise_f, n, sign)
+                remaining -= n
+            else:
+                break  # 남은 스텝 = 감속분 → 감속으로 정확히 목표 도달
 
-        for f in reversed(climbed):  # 감속 — 선점됐어도 반드시 수행 (급정지 방지)
+            if self._preempted(planned_target):
+                new_plan = self._retarget(sign, len(climbed) * self.seg_steps)
+                if new_plan is None:
+                    break  # 정지/역방향/종료 — 감속 후 _run이 재계획
+                planned_target, remaining = new_plan
+
+        for f in reversed(climbed):  # 감속 — 어느 경로로 나왔든 반드시 수행 (급정지 방지)
             self._emit(f, self.seg_steps, sign)
 
         self._drain()

@@ -151,6 +151,12 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
         fov_v = fov_cfg["v"]
         sign = -1.0 if args.invert else 1.0
         aim_key = "upper" if args.region == "chest" else args.region
+        # run_tilt_tracking은 verify_track_tilt.py 원본 그대로 args.gain/args.deadzone을
+        # 틸트 이득/데드존으로 읽는다 (단독 스크립트 시절엔 축 접두사가 없었음).
+        # 이 스크립트의 인터페이스는 --gain-tilt/--deadzone-tilt이므로 여기서 옮겨
+        # 심는다 — tracking_core를 고치면 verify_track_tilt.py 동작이 바뀌기 때문.
+        args.gain = args.gain_tilt
+        args.deadzone = args.deadzone_tilt
 
         def _run(stop_event):
             cam, backend = _open_cam()

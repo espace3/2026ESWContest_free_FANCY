@@ -41,9 +41,11 @@ verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라
 ────────────────────────────────────────────────────────────────────────────
 
 원점 복귀·복원 (요구 5):
-  - 실행 중 1초마다 장부 각도를 --state-file에 저장, 종료 시 (0°,0°) 복귀 후 기록.
-  - 재시작 시 파일에 0이 아닌 값이 남아 있으면(비정상 종료) 역이동해 원점 복원.
-    tilt는 웜기어 자기잠금이라 전원이 꺼져도 유지 → 복원 신뢰 가능. pan은 직결이라
+  - 장부 저장/복원은 MotorController가 담당한다 (hardware/position_store.py).
+    실행 중 장부가 바뀔 때마다 상태 파일에 기록되고, 시작 시 restore_origin()이
+    기록된 만큼 되돌아와 0°에서 출발한다. 종료 시에도 (0°,0°)로 복귀한다.
+  - 영점 자체를 새로 잡으려면 scripts/set_origin.py를 한 번 실행한다.
+  - tilt는 웜기어 자기잠금이라 전원이 꺼져도 유지 → 복원 신뢰 가능. pan은 직결이라
     EN 해제 중 외력에 밀렸으면 부정확 — 근본 해결은 호밍 도입 (hardware/TODO.md).
 
 실기 검증 절차 (RPi 5, 레포 루트에서):
@@ -56,7 +58,6 @@ verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import threading
 import time
@@ -74,6 +75,8 @@ from vision.pose_tracker import PoseTracker
 from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
 from control.control_signal_generator import apply_deadzone
 from control.fullbody_scenario import FullBodyScenario
+# 모터 열기/원점 복원 헬퍼는 tracking_core 공용 (verify_track_*와 같은 상태 파일 사용)
+from tracking_core import add_state_args, open_motor_from_args
 from verify_movenet import (_open_camera, _read_frame, _release_camera, draw_pose,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
@@ -99,34 +102,6 @@ def chest_point(keypoints: list[dict], conf_thr: float) -> dict:
     return {"cx": 0.5, "cy": 0.5, "visible": False}
 
 
-class _DryMotor:
-    """--dry-run용 팬+틸트 모터 스텁 — move_to를 '즉시 도달'로 가정 (개발 PC 전용)."""
-
-    def __init__(self) -> None:
-        self._pan = 0.0
-        self._tilt = 0.0
-
-    def enable(self) -> None: ...
-    def home(self) -> None: self._pan = self._tilt = 0.0
-    def move_to(self, pan_deg: float, tilt_deg: float) -> None:
-        self._pan, self._tilt = pan_deg, tilt_deg
-    def current_position(self) -> tuple[float, float]: return (self._pan, self._tilt)
-    def wait_until_idle(self, timeout: float | None = None) -> bool: return True
-    def close(self) -> None: ...
-    def __enter__(self) -> "_DryMotor": return self
-    def __exit__(self, *exc) -> None: ...
-
-
-def _open_motor(dry_run: bool):
-    """실모터 또는 드라이런 스텁. lgpio 없는 개발 PC에서 --dry-run으로 뜰 수 있게
-    MotorController import를 지연한다."""
-    if dry_run:
-        print("[motor] DRY-RUN — 실제 모터를 구동하지 않습니다 (각도 계산만).")
-        return _DryMotor()
-    from hardware.motor_controller import MotorController
-    return MotorController(CFG)
-
-
 def _axes_idle(mc) -> bool:
     """두 축 모두 목표 도달 + 큐 배출 상태인지 논블로킹 확인 (_DryMotor는 항상 True)."""
     if not hasattr(mc, "pan"):
@@ -138,42 +113,14 @@ def _axes_idle(mc) -> bool:
     return True
 
 
-# ── 원점 상태 파일 (요구 5) ───────────────────────────────────────────────────
+# ── 원점 복귀 (요구 5) ────────────────────────────────────────────────────────
+# 장부 저장/복원 자체는 MotorController + hardware/position_store.py가 담당한다
+# (예전에는 이 파일에만 있었지만, 같은 헤드를 다른 스크립트로 돌리면 낡은 값이
+# 남아 엉뚱하게 복원되는 문제가 있어 공용 모듈로 올렸다). 여기 남은 건 종료 시
+# 물리적으로 원점까지 되돌리는 절차뿐이다 — 최종 장부 기록은 close()가 한다.
 
-def _save_state(path: Path, pan: float, tilt: float) -> None:
-    try:
-        path.write_text(json.dumps({"pan": pan, "tilt": tilt, "ts": time.time()}))
-    except OSError as e:
-        print(f"\n[state] 저장 실패: {e}")
-
-
-def _restore_initial_position(mc, path: Path) -> None:
-    """이전 실행이 원점 복귀 없이 죽었으면 저장 장부만큼 역이동해 원점을 복원한다.
-    tilt는 웜기어 자기잠금이라 신뢰 가능, pan은 외력에 밀렸으면 부정확 (docstring)."""
-    if not path.exists():
-        return
-    try:
-        st = json.loads(path.read_text())
-        pan, tilt = float(st["pan"]), float(st["tilt"])
-    except (OSError, ValueError, KeyError, TypeError) as e:
-        print(f"[state] {path} 해석 실패({e}) — 복원 생략")
-        return
-    if abs(pan) < 0.05 and abs(tilt) < 0.05:
-        return
-    if abs(pan) > 180.0 or abs(tilt) > 90.0:
-        print(f"[state] 저장값 비정상 (pan={pan:.1f}° tilt={tilt:.1f}°) — 복원 생략")
-        return
-    print(f"[state] 이전 종료 위치 pan={pan:+.2f}° tilt={tilt:+.2f}° — 원점 복원 이동")
-    mc.home()
-    mc.move_to(-pan, -tilt)
-    if not mc.wait_until_idle(timeout=120):
-        print("[state] 복원 이동 타임아웃 — 모터/배선 확인 후 재실행하세요.")
-        sys.exit(1)
-    mc.home()
-
-
-def _return_home(mc, path: Path) -> None:
-    """종료 시 (0°,0°) 복귀, 완료 여부와 함께 최종 장부를 상태 파일에 기록."""
+def _return_home(mc) -> None:
+    """종료 시 (0°,0°) 복귀. 완료하지 못하면 다음 실행이 장부로 복원을 시도한다."""
     print("\n[fulltrack] 원점(0°,0°) 복귀 중...")
     done = False
     try:
@@ -182,7 +129,6 @@ def _return_home(mc, path: Path) -> None:
     except Exception as e:
         print(f"[fulltrack] 복귀 이동 실패: {e}")
     pan, tilt = mc.current_position()
-    _save_state(path, pan, tilt)
     print("[fulltrack] 원점 복귀 완료" if done else
           f"[fulltrack] 복귀 미완료 (pan={pan:+.2f}° tilt={tilt:+.2f}°) — 다음 실행에서 복원 시도")
 
@@ -212,12 +158,12 @@ def _draw_overlay(frame, people, target_idx, smoothed, fresh, scenario,
 # ── 메인 루프 ────────────────────────────────────────────────────────────────
 
 def _track_loop(args, detector, cam, backend, tracker, scenario, mc,
-                web_state, state_path: Path) -> None:
+                web_state) -> None:
     prev_center: tuple[float, float] | None = None
     last_pan = last_tilt = 0.0
     fps_hist: list[float] = []
     t_prev = time.time()
-    last_log = last_save = time.time()
+    last_log = time.time()
 
     while True:
         t0 = time.time()
@@ -272,12 +218,6 @@ def _track_loop(args, detector, cam, backend, tracker, scenario, mc,
         if (pan_g, tilt_g) != (last_pan, last_tilt):
             mc.move_to(pan_g, tilt_g)
             last_pan, last_tilt = pan_g, tilt_g
-
-        # 비정상 종료 대비 장부 저장 (요구 5)
-        if time.time() - last_save >= 1.0:
-            cur_pan, cur_tilt = mc.current_position()
-            _save_state(state_path, cur_pan, cur_tilt)
-            last_save = time.time()
 
         # ── FPS/상태 로그 (README: 파이프라인 단계 추가 시 측정 코드 동봉) ──
         dt = time.time() - t_prev
@@ -345,9 +285,10 @@ def main() -> None:
     p.add_argument("--search-step", type=float, default=15.0, help="어깨 탐색 팬 스윕 간격 (°)")
     p.add_argument("--search-limit", type=float, default=60.0, help="어깨 탐색 팬 스윕 범위 ±°")
     p.add_argument("--search-dwell", type=int, default=8, help="탐색 지점당 관찰 프레임")
-    # ── 원점 상태 파일 (요구 5) ──────────────────────────────────────────────
-    p.add_argument("--state-file", default="fulltrack_state.json")
-    p.add_argument("--no-restore", action="store_true", help="시작 시 원점 복원 생략")
+    # ── 원점 상태 파일 (요구 5) — 모든 스크립트 공용 ─────────────────────────
+    add_state_args(p)
+    p.add_argument("--no-restore", action="store_true",
+                   help="시작 시 원점 복원 생략 (헤드를 손으로 0°에 맞춰뒀을 때)")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--wide", action="store_true", help="Camera Module 3 Wide 렌즈 화각 사용")
@@ -388,8 +329,6 @@ def main() -> None:
         search_step_deg=args.search_step, search_limit_deg=args.search_limit,
         search_dwell=args.search_dwell,
     )
-    state_path = Path(args.state_file)
-
     web_srv = web_state = None
     if args.web:
         web_state = _WebStreamState(args.web_quality, args.web_fps)
@@ -401,19 +340,20 @@ def main() -> None:
     print(f"  gain={args.gain}/{args.gain_tilt}  deadzone={args.deadzone}/{args.deadzone_tilt}°  "
           f"tilt=[{args.tilt_min:g},{args.tilt_max:g}]°  invert={args.invert}/{args.invert_tilt}")
 
-    motor_cm = _open_motor(args.dry_run)
+    motor_cm = open_motor_from_args(args)
     try:
         with motor_cm as mc:
             mc.enable()
-            if not args.no_restore:
-                _restore_initial_position(mc, state_path)
-            mc.home()
-            print("[motor] 현재 위치를 (0°, 0°)로 설정.")
+            if args.no_restore:
+                mc.home()
+                print("[motor] --no-restore — 현재 위치를 (0°, 0°)로 선언합니다.")
+            else:
+                mc.restore_origin()
             try:
                 _track_loop(args, detector, cam, backend, tracker, scenario, mc,
-                            web_state, state_path)
+                            web_state)
             finally:
-                _return_home(mc, state_path)
+                _return_home(mc)
     except KeyboardInterrupt:
         print("\n[verify_fulltrack] Ctrl+C 중단")
     finally:

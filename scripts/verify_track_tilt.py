@@ -44,7 +44,7 @@ from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 # 루프 본문/헬퍼는 tracking_core로 추출됨 (verify_track_pan/pantilt와 공유).
-from tracking_core import _open_motor, run_tilt_tracking
+from tracking_core import add_state_args, open_motor_from_args, run_tilt_tracking
 from verify_movenet import (_open_camera, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
@@ -77,6 +77,7 @@ def main() -> None:
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",
                    help="모터/lgpio 없이 각도 계산만 (개발 PC 검증용)")
+    add_state_args(p)
     # ── 웹 스트림 ────────────────────────────────────────────────────────────
     p.add_argument("--web", action="store_true", help="MJPEG 웹 스트림 송출")
     p.add_argument("--web-host", default="0.0.0.0")
@@ -113,12 +114,13 @@ def main() -> None:
 
     # 단독 실행 시에는 아무도 set하지 않는 stop_event — while True와 동일하게 동작.
     stop_event = threading.Event()
-    motor_cm = _open_motor(args.dry_run)
+    motor_cm = open_motor_from_args(args)
     try:
         with motor_cm as mc:
             mc.enable()
-            mc.home()  # 현재 물리 위치 = 틸트 0°. 시작 위치에 마커를 붙여두면 대조에 편함
-            print("[motor] 현재 위치를 틸트 0°로 설정 (임시 호밍).")
+            # 이전 실행이 돌아간 채 꺼졌으면 저장 위치만큼 되돌아와 중앙을 본다.
+            # 첫 실행이면 현재 위치가 틸트 0°가 된다 — 시작 위치 마커 권장.
+            mc.restore_origin()
             try:
                 run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                                   fov_v, sign, aim_key, web_state=web_state)

@@ -148,13 +148,18 @@ def main() -> None:
     parser.add_argument("--short", action="store_true", help="짧은 이동(수 스텝) 한계 실측")
     parser.add_argument("--track-sim", type=float, default=None, metavar="SEC",
                         help="20Hz 랜덤 잔이동 시뮬레이션 (초)")
+    # 이 스크립트도 추적 스크립트와 같은 물리 헤드를 움직이므로 같은 상태 파일을
+    # 쓴다 — 여기서만 안 쓰면 파일이 낡아서 다음 추적 실행이 엉뚱한 각도로 복원한다.
+    ms = CFG.get("motor_state", {})
+    parser.add_argument("--state-file", default=ms.get("file", "motor_state.json"),
+                        help="모터 위치 상태 파일 (모든 스크립트 공용)")
     args = parser.parse_args()
 
-    with MotorController(CFG) as mc:
+    with MotorController(CFG, state_path=args.state_file) as mc:
         mv = make_mover(mc, args.axis)
         mc.enable()
-        mc.home()  # 현재 물리 위치 = 0° (임시 호밍) — 시작 위치에 마커를 붙여둘 것
-        print(f"[{args.axis}] 시작 위치를 0°로 설정했습니다. 마커를 붙이세요.")
+        # 저장값이 있으면 그만큼 되돌아와 0°에서 시작한다 (없으면 현재 위치가 0°).
+        mc.restore_origin()
         try:
             if args.sweep is not None:
                 run_sweep(mc, mv, args.sweep, args.cycles)

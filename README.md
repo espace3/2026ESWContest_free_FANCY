@@ -26,14 +26,16 @@ control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
   control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 모터 회전 속도 단계 매핑 (풍속 아님 — 풍속은 BLE로 사용자가 부위별 지정)
   fullbody_scenario.py         # 전신(머리→발) 추적 시나리오 상태기계: 스캔→웨이포인트 순찰, 이동 재획득(재조준/어깨 탐색), 가림·틸트 리밋 처리
 hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
-  motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 논블로킹 (축별 워커 스레드, 최신 목표 선점)
+  motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 논블로킹 (축별 워커 스레드, 최신 목표 선점, 위치 저장/복원)
   relay_controller.py  # 선풍기 풍속 릴레이(TS0011) 구동 — 논블로킹 (break-before-make 워커, 전부 오픈=정지)
+  position_store.py    # 팬틸트 장부 위치(스텝)를 파일에 저장/복원 — 재시작 시 중앙으로 되돌아오기 위한 것
   TODO.md              # 하드웨어 관련 미결 결정·실기 검증 항목
 scripts/             # 단계별 수동 검증 스크립트
   verify_movenet.py     # 1단계: 카메라 캡처 + 시각화/웹스트림으로 포즈 추정 확인
   verify_motor.py       # 2단계: 스텝모터 단독 구동 (lgpio tx_pwm, 회전수 단위)
   verify_pantilt.py     # 2단계: MotorController 각도 단위 검증 (단발/왕복/속도/선점/짧은 이동)
-  tracking_core.py      # 3단계 공유 모듈: chest_point/_DryMotor/_open_motor +
+  set_origin.py         # 지금 헤드가 향한 곳을 영점(0°)으로 기록 (모터는 안 움직임, 인자 없음)
+  tracking_core.py      # 3단계 공유 모듈: chest_point/_DryMotor/_open_motor/상태파일 인자 +
                          # run_pan/tilt/pantilt_tracking (아래 세 verify_track_*.py가 공용)
   verify_track_pan.py   # 3단계: 카메라 기반 팬 추적 닫힌 루프 (가슴 화면 중앙 정렬)
   verify_track_tilt.py  # 3단계: 틸트 단독 추적 닫힌 루프 (방향/속도/소프트 리밋 검증, 부위 조준 예행)

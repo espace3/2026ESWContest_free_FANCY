@@ -62,8 +62,8 @@ from bluez_peripheral.util import get_message_bus
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
-from tracking_core import (_open_motor, run_pan_tracking, run_tilt_tracking,
-                           run_pantilt_tracking)
+from tracking_core import (add_state_args, open_motor_from_args, run_pan_tracking,
+                           run_tilt_tracking, run_pantilt_tracking)
 from verify_movenet import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
@@ -374,6 +374,7 @@ def main() -> None:
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",
                    help="모터/lgpio 없이 각도 계산만 (개발 PC 검증용)")
+    add_state_args(p)
     # ── 웹 스트림 ────────────────────────────────────────────────────────────
     p.add_argument("--web", action="store_true", help="MJPEG 웹 스트림 송출")
     p.add_argument("--web-host", default="0.0.0.0")
@@ -419,12 +420,13 @@ def main() -> None:
             viewer_thread.start()
             print("[E2E] 로컬 창 뷰어 시작 (전용 GUI 스레드)")
 
-    motor_cm = _open_motor(args.dry_run)
+    motor_cm = open_motor_from_args(args)
     try:
         with motor_cm as mc:
             mc.enable()
-            mc.home()  # 현재 물리 위치 = 0°(각 축). 시작 위치에 마커를 붙여두면 대조에 편함
-            print("[motor] 현재 위치를 0°로 설정 (임시 호밍).")
+            # 이전 실행이 돌아간 채 꺼졌으면 저장 위치만큼 되돌아와 중앙을 본다.
+            # 첫 실행이면 현재 위치가 0°(각 축)가 된다 — 시작 위치 마커 권장.
+            mc.restore_origin()
 
             run_fn = _make_runner(args.axis, detector, tracker, mc, args, web_state)
             supervisor = _TrackingSupervisor(run_fn, web_state=web_state)

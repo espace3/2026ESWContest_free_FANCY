@@ -57,7 +57,7 @@ from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 # 루프 본문/헬퍼는 tracking_core로 추출됨 (verify_track_tilt/pantilt와 공유).
-from tracking_core import _open_motor, run_pan_tracking
+from tracking_core import add_state_args, open_motor_from_args, run_pan_tracking
 # 카메라 캡처 백엔드는 verify_movenet 것을 그대로 재사용한다 (중복 구현 방지).
 # verify_movenet은 hardware(lgpio)를 import하지 않으므로 --dry-run 개발 PC에서도 안전.
 from verify_movenet import (_open_camera, _release_camera,
@@ -91,6 +91,7 @@ def main() -> None:
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",
                    help="모터/lgpio 없이 각도 계산만 (개발 PC 검증용)")
+    add_state_args(p)
     # ── 웹 스트림 (SSH 등 디스플레이 없을 때 브라우저로 확인) ──────────────────
     p.add_argument("--web", action="store_true",
                    help="MJPEG 웹 스트림 송출. SSH 환경에선 보통 --web --no-window 로 실행")
@@ -125,12 +126,14 @@ def main() -> None:
 
     # 단독 실행 시에는 아무도 set하지 않는 stop_event — while True와 동일하게 동작.
     stop_event = threading.Event()
-    motor_cm = _open_motor(args.dry_run)
+    motor_cm = open_motor_from_args(args)
     try:
         with motor_cm as mc:
             mc.enable()
-            mc.home()  # 현재 물리 위치 = 팬 0°. 시작 위치에 마커를 붙여두면 대조에 편함
-            print("[motor] 현재 위치를 팬 0°로 설정 (임시 호밍).")
+            # 이전 실행이 돌아간 채 꺼졌으면 저장 위치만큼 되돌아와 중앙을 본다.
+            # 첫 실행이면 현재 위치가 팬 0°가 된다 — 시작 위치에 마커를 붙여두면
+            # 다음 실행에서 복원 결과를 눈으로 대조할 수 있다.
+            mc.restore_origin()
 
             run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                              fov_h, sign, web_state=web_state)

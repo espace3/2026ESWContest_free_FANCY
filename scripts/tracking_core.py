@@ -43,7 +43,10 @@ def chest_point(keypoints: list[dict], conf_thr: float) -> dict:
 class _DryMotor:
     """--dry-run용 모터 스텁. lgpio/실모터 없이 개발 PC에서 오차→목표각 파이프라인만
     확인하기 위한 것. move_to를 '즉시 도달'로 가정해 current_position이 마지막
-    목표각을 그대로 돌려준다 (실모터의 가감속/지연은 재현하지 않음)."""
+    목표각을 그대로 돌려준다 (실모터의 가감속/지연은 재현하지 않음).
+
+    위치 상태 파일은 건드리지 않는다 — 실제로 움직인 게 없는데 장부를 덮어쓰면
+    다음 실기 실행이 잘못된 원점으로 복원하기 때문이다."""
 
     def __init__(self) -> None:
         self._pan = 0.0
@@ -51,6 +54,9 @@ class _DryMotor:
 
     def enable(self) -> None: ...
     def home(self) -> None: self._pan = self._tilt = 0.0
+    def restore_origin(self, timeout: float = 120.0) -> bool:
+        self._pan = self._tilt = 0.0
+        return True
     def move_to(self, pan_deg: float, tilt_deg: float) -> None:
         self._pan, self._tilt = pan_deg, tilt_deg
     def current_position(self) -> tuple[float, float]: return (self._pan, self._tilt)
@@ -60,16 +66,30 @@ class _DryMotor:
     def __exit__(self, *exc) -> None: ...
 
 
-def _open_motor(dry_run: bool):
+def _open_motor(dry_run: bool, state_path=None):
     """실모터(MotorController) 또는 드라이런 스텁을 연다. MotorController import를
     이 함수 안으로 미룬 이유: 그 모듈은 최상단에서 lgpio를 import하는데, 개발
     PC(lgpio 없음)에서 --dry-run으로 돌릴 때 최상단 import면 스크립트가 아예
-    뜨질 못하기 때문이다."""
+    뜨질 못하기 때문이다.
+
+    state_path=None이면 config "motor_state".file을 쓴다 (모든 스크립트 공용)."""
     if dry_run:
         print("[motor] DRY-RUN — 실제 모터를 구동하지 않습니다 (각도 계산만).")
         return _DryMotor()
     from hardware.motor_controller import MotorController
-    return MotorController(CFG)
+    return MotorController(CFG, state_path=state_path)
+
+
+def add_state_args(parser) -> None:
+    """위치 상태 파일 인자 (모터를 구동하는 스크립트 공통)."""
+    ms = CFG.get("motor_state", {})
+    parser.add_argument("--state-file", default=ms.get("file", "motor_state.json"),
+                        help="모터 위치 상태 파일 (재시작 시 원점 복원용, 모든 스크립트 공용)")
+
+
+def open_motor_from_args(args):
+    """add_state_args로 받은 인자대로 모터를 연다."""
+    return _open_motor(args.dry_run, state_path=getattr(args, "state_file", None))
 
 
 def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,

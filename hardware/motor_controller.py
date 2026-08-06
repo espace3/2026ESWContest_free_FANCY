@@ -40,9 +40,16 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     (=2구간 120스텝) 미만의 잔이동만 탄다 — 몇 스텝까지 정확히/조용히
     움직이는지 실측 필요 (TODO.md).
 
+  - 위치 기억(장부 영속화): 리밋 스위치·엔코더가 없어 절대 원점을 잴 수단이
+    없으므로, 장부를 주기적으로 파일에 남겨 재시작 때 되살린다
+    (hardware/position_store.py, restore_origin()). home()이 "지금 이 위치가
+    0°"라는 선언에 불과한 것을 보완하는 임시 수단이며, 탈조와 전원 차단 중
+    외력은 여전히 잡지 못한다 — 한계는 position_store.py docstring 참고.
+
 TODO — 남은 미결 (hardware/TODO.md 참고):
   - DIR 값 ↔ 각도 부호 매핑 실기 확인 (config stepper.*.dir_for_positive)
-  - 호밍: 지금 home()은 "호출 시점의 물리 위치 = 0°" 가정 (임시 방편)
+  - 호밍: 리밋 스위치/엔코더 도입 여부 미결. 그 전까지는 위 장부 영속화가
+    유일한 원점 복원 수단이다 (사람이 물리 마커로 대조하는 절차 병행 권장).
   - 회전 금지 구역: 조립 후 배선/프레임 간섭으로 정해지는 HW 제약 (모터 자체
     한계 아님). 각도 clamp는 control 쪽 몫이라 여기서는 재계산하지 않고,
     구역이 확정되면 config에 min/max로 추가한다.
@@ -54,6 +61,8 @@ import threading
 import time
 
 import lgpio
+
+from hardware.position_store import PositionStore
 
 _CHUNK_S = 0.04       # 순항 청크 하나의 재생 시간 (초)
 _LOOKAHEAD_S = 0.09   # 큐에 미리 쌓아두는 최대 분량 (초) = 선점 반응 지연의 상한
@@ -114,6 +123,23 @@ class _Axis:
         with self.cond:
             self.target_steps = steps
             self.cond.notify_all()
+
+    def read_steps(self) -> int:
+        with self.cond:
+            return self.pos_steps
+
+    def force_position_steps(self, steps: int) -> None:
+        """장부를 주어진 값으로 갈아끼운다 — 모터는 움직이지 않는다.
+
+        재시작 시 "이전 실행이 여기서 죽었다"는 저장값을 장부에 되살리는 용도다
+        (restore_origin). 목표도 같은 값으로 맞춰서 워커가 곧바로 움직이지
+        않게 한다. 이동 중 호출하면 실제 위치와 장부가 어긋나므로 금지한다.
+        """
+        with self.cond:
+            if not (self.idle and self.target_steps == self.pos_steps):
+                raise RuntimeError(f"{self.name} 이동 중에는 장부를 바꿀 수 없습니다")
+            self.pos_steps = steps
+            self.target_steps = steps
 
     def close(self) -> None:
         """워커 스레드 종료. 이동 중이면 감속까지 마치고 멈춘다."""
@@ -233,12 +259,17 @@ class MotorController:
 
         with MotorController(CFG) as mc:
             mc.enable()
-            mc.home()
+            mc.restore_origin()      # 이전 실행이 돌아간 채 죽었으면 원점 복원
             mc.move_to(12.5, -3.0)   # 즉시 리턴, 백그라운드에서 이동
             mc.wait_until_idle()     # 블로킹이 필요한 곳(검증 스크립트) 전용
+
+    home()이나 restore_origin()으로 장부를 확정한 뒤부터 장부를 주기적으로 상태
+    파일에 남긴다 — 재시작 때 원점을 되찾기 위한 것이며, 근거와 한계는
+    position_store.py 참고. state_path=None이면 config "motor_state".file을 쓴다.
     """
 
-    def __init__(self, cfg: dict, handle: int | None = None) -> None:
+    def __init__(self, cfg: dict, handle: int | None = None, *,
+                 state_path=None, save_interval_s: float | None = None) -> None:
         self._own_handle = handle is None
         self.h = open_chip() if handle is None else handle
         pins = cfg["pins"]
@@ -253,6 +284,99 @@ class MotorController:
 
         self.pan = _Axis(self.h, "pan", pins["pan"], st["pan"], spr)
         self.tilt = _Axis(self.h, "tilt", pins["tilt"], st["tilt"], spr)
+
+        # ── 장부 영속화 ──────────────────────────────────────────────────────
+        ms = cfg.get("motor_state", {})
+        path = state_path if state_path is not None else ms.get("file")
+        self.store = PositionStore(path) if path else None
+        self._save_interval_s = (save_interval_s if save_interval_s is not None
+                                 else float(ms.get("save_interval_s", 0.5)))
+        self._persist_quit = threading.Event()
+        self._persist_warned = False
+        self._persist_thread = None
+        # 저장 스레드는 여기서 띄우지 않는다 — _start_persist() 주석 참고.
+
+    # ── 장부 영속화 ──────────────────────────────────────────────────────────
+
+    def _start_persist(self) -> None:
+        """저장 스레드를 띄운다 (이미 떠 있으면 무시).
+
+        생성 시점이 아니라 장부가 확정된 뒤(home() 또는 restore_origin())에야
+        띄우는 이유: 갓 만든 컨트롤러의 장부는 무조건 0이라, 복원 전에 저장
+        스레드가 한 번이라도 돌면 파일의 이전 위치를 0으로 덮어써서 복원이
+        통째로 날아간다. 카메라·모델 로딩으로 restore_origin() 호출이 저장
+        주기(0.5s)보다 늦어지면 실제로 재현된다.
+        """
+        if self.store is None or self._persist_thread is not None:
+            return
+        self._persist_thread = threading.Thread(
+            target=self._persist_loop, daemon=True, name="motor-persist")
+        self._persist_thread.start()
+
+    def _write_state(self) -> bool:
+        """현재 장부를 상태 파일에 기록. 실패해도 구동은 계속한다 (경고 1회)."""
+        if not self.store:
+            return False
+        pan_steps, tilt_steps = self.pan.read_steps(), self.tilt.read_steps()
+        try:
+            self.store.save(pan_steps, tilt_steps,
+                            pan_steps * self.pan.deg_per_step,
+                            tilt_steps * self.tilt.deg_per_step)
+            return True
+        except OSError as e:
+            if not self._persist_warned:
+                print(f"\n[motor] 위치 상태 저장 실패 — 재시작 시 원점 복원 불가: {e}")
+                self._persist_warned = True
+            return False
+
+    def _persist_loop(self) -> None:
+        """장부가 바뀌었을 때만 주기 저장. 정지 중에는 쓰기가 아예 없다.
+
+        저장 주기가 곧 전원 차단 시 유실되는 이동량의 상한이다
+        (0.5s × pan 순항 ≈6.75°/s ≈ 3.4°). 줄이려면 config
+        motor_state.save_interval_s를 낮추면 되지만 SD 쓰기가 그만큼 늘어난다.
+        """
+        last = (self.pan.read_steps(), self.tilt.read_steps())
+        while not self._persist_quit.wait(self._save_interval_s):
+            snap = (self.pan.read_steps(), self.tilt.read_steps())
+            if snap != last and self._write_state():
+                last = snap
+
+    def restore_origin(self, timeout: float = 120.0) -> bool:
+        """재시작 직후 호출 — 저장된 위치만큼 되돌아와 중앙(0°,0°)을 보게 한다.
+
+        enable() 뒤, 추적을 시작하기 전에 부를 것. 저장값이 없으면(첫 실행)
+        home()과 같이 현재 위치를 0°로 삼는다. 복귀 이동이 timeout 안에
+        끝났으면 True.
+        """
+        if not self.store:
+            self.home()
+            return True
+
+        saved = self.store.load()
+        if saved is None:
+            self.home()
+            print("[motor] 저장된 위치 없음 — 현재 위치를 0°로 삼습니다. "
+                  "헤드가 0° 마커에 맞춰져 있는지 확인하세요.")
+            return True
+
+        pan_steps, tilt_steps = saved
+        self.pan.force_position_steps(pan_steps)
+        self.tilt.force_position_steps(tilt_steps)
+        self._start_persist()   # 장부가 확정된 뒤에 (이 순서가 중요 — _start_persist 참고)
+        if pan_steps == 0 and tilt_steps == 0:
+            print("[motor] 이전 위치가 원점 — 이동 없이 시작합니다.")
+            return True
+
+        pan_deg, tilt_deg = self.current_position()
+        print(f"[motor] 이전 위치 pan={pan_deg:+.2f}° tilt={tilt_deg:+.2f}° — "
+              f"중앙으로 복귀합니다.")
+        self.move_to(0.0, 0.0)
+        done = self.wait_until_idle(timeout=timeout)
+        if not done:
+            print(f"[motor] 복귀가 {timeout:g}s 안에 끝나지 않았습니다 — 물리 위치를 확인하세요.")
+        self._write_state()
+        return done
 
     # ── 전원 ─────────────────────────────────────────────────────────────────
 
@@ -269,13 +393,19 @@ class MotorController:
 
     def home(self) -> None:
         """임시 호밍: 현재 물리 위치를 원점(0°)으로 삼는다. 이동 중 호출 금지.
-        리밋 스위치/위치 저장 도입 여부 결정 전까지의 방편 (TODO.md)."""
+
+        원점을 '찾는' 게 아니라 '지금 이 자리를 0°라고 선언'하는 것이므로,
+        헤드가 돌아간 채 죽은 다음 실행에서 그냥 부르면 그 자리가 새 0°가 된다.
+        재시작 경로에서는 이걸 직접 부르지 말고 restore_origin()을 쓸 것 —
+        상태 파일이 있으면 되살리고, 없을 때만(첫 실행) home()으로 떨어진다.
+        리밋 스위치/엔코더 도입 전까지의 방편 (TODO.md)."""
         for ax in (self.pan, self.tilt):
             with ax.cond:
                 if not (ax.idle and ax.target_steps == ax.pos_steps):
                     raise RuntimeError(f"{ax.name} 이동 중에는 home() 호출 불가")
                 ax.pos_steps = 0
                 ax.target_steps = 0
+        self._start_persist()   # 장부가 확정됐으므로 이제 저장해도 안전하다
 
     def move_to(self, pan_angle_deg: float, tilt_angle_deg: float) -> None:
         """목표 각도로 이동 시작 — 논블로킹, 즉시 리턴. 이동 중 다시 부르면
@@ -310,9 +440,21 @@ class MotorController:
     # ── 정리 ─────────────────────────────────────────────────────────────────
 
     def close(self) -> None:
-        """워커 종료(진행 중 이동은 감속 후 정지) → disable → 핸들 반납."""
+        """워커 종료(진행 중 이동은 감속 후 정지) → 최종 장부 기록 → disable → 핸들 반납.
+
+        워커가 멈춘 뒤에 기록하므로 장부 = 실제 위치다. 호출부가 종료 전에
+        move_to(0,0)로 원점 복귀를 마쳤다면 여기 기록되는 값은 0이고, 다음
+        실행은 이동 없이 곧바로 시작한다.
+        """
         self.pan.close()
         self.tilt.close()
+        self._persist_quit.set()
+        if self._persist_thread:
+            # 저장 스레드가 떠 있다 = 장부가 확정됐다(_start_persist 참고). 확정
+            # 전이라면 장부의 기준이 없으므로 파일을 덮지 않는다 — 호출부가
+            # restore_origin()을 빠뜨렸을 때 저장값을 날리지 않기 위한 것.
+            self._persist_thread.join(timeout=2)
+            self._write_state()
         self.disable()
         if self._own_handle:
             lgpio.gpiochip_close(self.h)

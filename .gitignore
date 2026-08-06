@@ -10,4 +10,6 @@ venv/
 .python_version/
 CLAUDE.md
 fulltrack_state.json
+motor_state.json
+motor_state.json.tmp
 docs/

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 
 
@@ -46,6 +47,10 @@ class PositionStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        # save()는 저장 스레드와 메인 스레드(restore_origin/close) 양쪽에서 불린다.
+        # 둘이 겹치면 같은 .tmp 파일을 서로 truncate해서 깨진 내용이 그대로
+        # os.replace될 수 있으므로 직렬화한다.
+        self._lock = threading.Lock()
 
     def load(self) -> tuple[int, int] | None:
         """저장된 (pan_steps, tilt_steps). 파일이 없거나 읽을 수 없으면 None."""
@@ -69,16 +74,17 @@ class PositionStore:
             "tilt_deg": round(tilt_deg, 4),
         }
         directory = self.path.parent
-        directory.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + ".tmp")
-        with open(tmp, "w") as f:
-            json.dump(payload, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
-        # rename 자체를 디스크에 확정 (안 하면 전원 차단 시 교체가 날아갈 수 있다)
-        dir_fd = os.open(directory, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        with self._lock:
+            directory.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "w") as f:
+                json.dump(payload, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
+            # rename 자체를 디스크에 확정 (안 하면 전원 차단 시 교체가 날아갈 수 있다)
+            dir_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)

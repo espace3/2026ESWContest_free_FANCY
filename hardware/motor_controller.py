@@ -108,6 +108,11 @@ class _Axis:
         lgpio.gpio_claim_output(self.h, self.dir_pin, 0)
         lgpio.gpio_claim_output(self.h, self.step_pin, 0)
 
+        # 장부가 바뀔 때마다 부를 콜백 (MotorController가 저장 스레드를 깨우는 용도).
+        # 여기서 직접 파일을 쓰면 fsync가 이 스레드를 수십 ms 붙잡아 펄스 큐가
+        # 굶고 탈조가 나므로, 신호만 보내고 쓰기는 저장 스레드가 한다.
+        self.on_change = None
+
         self.cond = threading.Condition()
         self.pos_steps = 0
         self.target_steps = 0
@@ -140,6 +145,8 @@ class _Axis:
                 raise RuntimeError(f"{self.name} 이동 중에는 장부를 바꿀 수 없습니다")
             self.pos_steps = steps
             self.target_steps = steps
+        if self.on_change:
+            self.on_change()
 
     def close(self) -> None:
         """워커 스레드 종료. 이동 중이면 감속까지 마치고 멈춘다."""
@@ -185,6 +192,8 @@ class _Axis:
         self._sched_end = max(self._sched_end, time.monotonic()) + steps / freq
         with self.cond:
             self.pos_steps += sign * steps
+        if self.on_change:   # 청크 하나 나갈 때마다 저장 스레드를 깨운다 (쓰기는 그쪽 몫)
+            self.on_change()
 
     def _drain(self) -> None:
         """큐잉된 펄스가 전부 송출될 때까지 대기. DIR 변경/재계획 전 필수."""
@@ -269,7 +278,7 @@ class MotorController:
     """
 
     def __init__(self, cfg: dict, handle: int | None = None, *,
-                 state_path=None, save_interval_s: float | None = None) -> None:
+                 state_path=None) -> None:
         self._own_handle = handle is None
         self.h = open_chip() if handle is None else handle
         pins = cfg["pins"]
@@ -289,12 +298,13 @@ class MotorController:
         ms = cfg.get("motor_state", {})
         path = state_path if state_path is not None else ms.get("file")
         self.store = PositionStore(path) if path else None
-        self._save_interval_s = (save_interval_s if save_interval_s is not None
-                                 else float(ms.get("save_interval_s", 0.5)))
         self._persist_quit = threading.Event()
+        self._persist_wake = threading.Event()
         self._persist_warned = False
         self._persist_thread = None
-        # 저장 스레드는 여기서 띄우지 않는다 — _start_persist() 주석 참고.
+        # 두 축의 장부가 바뀔 때마다 저장 스레드를 깨우게 연결한다.
+        self.pan.on_change = self.tilt.on_change = self._persist_wake.set
+        # 저장 스레드 자체는 여기서 띄우지 않는다 — _start_persist() 주석 참고.
 
     # ── 장부 영속화 ──────────────────────────────────────────────────────────
 
@@ -330,14 +340,23 @@ class MotorController:
             return False
 
     def _persist_loop(self) -> None:
-        """장부가 바뀌었을 때만 주기 저장. 정지 중에는 쓰기가 아예 없다.
+        """장부가 바뀌면 곧바로 기록한다 (주기 폴링이 아님). 정지 중에는 쓰기 없음.
 
-        저장 주기가 곧 전원 차단 시 유실되는 이동량의 상한이다
-        (0.5s × pan 순항 ≈6.75°/s ≈ 3.4°). 줄이려면 config
-        motor_state.save_interval_s를 낮추면 되지만 SD 쓰기가 그만큼 늘어난다.
+        _Axis가 펄스 청크를 큐잉할 때마다 on_change로 깨워준다. 쓰기를 이 스레드로
+        떼어놓은 이유는 fsync가 SD에서 수십 ms씩 걸려서, 펄스를 내보내는 워커
+        스레드에서 직접 부르면 큐가 굶어 탈조가 나기 때문이다.
+
+        쓰는 동안 들어온 변경은 이벤트에 모였다가 다음 바퀴에서 한 번에 나간다
+        (자연스럽게 합쳐지므로 쓰기 횟수가 청크 수만큼 늘지는 않는다). 그래서
+        파일은 '직전 쓰기 한 번의 지연' 안에서 항상 최신이다.
         """
         last = (self.pan.read_steps(), self.tilt.read_steps())
-        while not self._persist_quit.wait(self._save_interval_s):
+        while not self._persist_quit.is_set():
+            self._persist_wake.wait(timeout=1.0)   # 타임아웃은 종료 확인용
+            if self._persist_quit.is_set():
+                break
+            # 읽기 전에 클리어 — 읽는 도중 장부가 또 바뀌면 다시 깨어난다
+            self._persist_wake.clear()
             snap = (self.pan.read_steps(), self.tilt.read_steps())
             if snap != last and self._write_state():
                 last = snap
@@ -449,6 +468,7 @@ class MotorController:
         self.pan.close()
         self.tilt.close()
         self._persist_quit.set()
+        self._persist_wake.set()   # 대기 중인 저장 스레드를 곧바로 깨워 끝낸다
         if self._persist_thread:
             # 저장 스레드가 떠 있다 = 장부가 확정됐다(_start_persist 참고). 확정
             # 전이라면 장부의 기준이 없으므로 파일을 덮지 않는다 — 호출부가

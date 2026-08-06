@@ -1,29 +1,27 @@
-(fancy) esw@ESW:~/ESW $ python3 scripts/verify_track_pan.py --rpicam --deadzone 0.3 --gain 0.2
-INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
-[movenet] 모델 로드: multipose_lightning.tflite
-[movenet] 입력: [  1 160 160   3]  dtype=uint8
-[movenet] 출력: [ 1  6 56]
-[movenet] conf_thr=0.25  min_person_score=0.15  threads=3
-[camera] rpicam-vid MJPEG cam0 (640x360@30fps, pid=3200)
+(fancy) esw@ESW:~/ESW $ ps -eLo pid,tid,cls,rtprio,comm | grep -i python
+   7311    7311  TS      - python3
+   7311    7352  TS      - python3
+   7311    7353  TS      - python3
+   7311    7354  TS      - python3
+   7311    7355  TS      - python3
+   7311    7356  TS      - python3
+   7311    7357  TS      - python3
+   7311    7358  TS      - python3
+   7311    7359  TS      - python3
+   7311    7361  TS      - python3
+   7311    7362  TS      - python3
+   7311    7363  TS      - python3
+   7311    7364  TS      - python3
+   7311    7365  TS      - python3
+   7311    7366  TS      - python3
+   7311    7380  TS      - python3
+   7311    7381  TS      - python3
+   7311    7382  TS      - python3
+   7311    7383  TS      - python3
+   7311    7385  TS      - python3
+   7311    7386  TS      - python3
+   7311    7387  TS      - python3
 
-[verify_track] 팬 추적 시작 — 카메라를 팬 헤드에 얹은 상태를 가정합니다.
-  gain=0.2  deadzone=0.3°  target_cx=0.5  limit=±100.0°  invert=False
-[motor] 이전 위치가 원점 — 이동 없이 시작합니다.
-
-[track] 목표 재획득 — 추적 재개 (idx=0)
-qt.qpa.plugin: Could not find the Qt platform plugin "wayland" in "/home/esw/.pyenv/versions/fancy/lib/python3.11/site-packages/cv2/qt/plugins"
-QFontDatabase: Cannot find font directory /home/esw/.pyenv/versions/fancy/lib/python3.11/site-packages/cv2/qt/fonts.
-Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
-QFontDatabase: Cannot find font directory /home/esw/.pyenv/versions/fancy/lib/python3.11/site-packages/cv2/qt/fonts.
-Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
-QFontDatabase: Cannot find font directory /home/esw/.pyenv/versions/fancy/lib/python3.11/site-packages/cv2/qt/fonts.
-Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
-QFontDatabase: Cannot find font directory /home/esw/.pyenv/versions/fancy/lib/python3.11/site-packages/cv2/qt/fonts.
-Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
-QFontDatabase: Cannot find font directory /home/esw/.pyenv/versions/fancy/lib/python3.11/site-packages/cv2/qt/fonts.
-Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
-[21:55:31] people=2 target=0   TRACK  err= -4.42°  pan_cur= -57.24° pan_cmd= -58.13°  fps=21.9  ^C
-[verify_track] Ctrl+C 중단
-
-[verify_track] 종료
+(fancy) esw@ESW:~/ESW $ python3 -c "import lgpio; print(lgpio.__file__)"
+/home/esw/.pyenv/versions/fancy/lib/python3.11/site-packages/lgpio.py
 

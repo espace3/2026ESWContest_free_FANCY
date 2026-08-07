@@ -59,12 +59,21 @@ TODO — 남은 미결 (hardware/TODO.md 참고):
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
 import lgpio
 
 from hardware.position_store import PositionStore
+
+# MOTOR_TIMING=1 이면 이동 한 구간이 끝날 때마다 펄스 타이밍 실측을 찍는다.
+# 재는 것: 큐에 넣은 펄스가 "명령한 주파수대로" 재생됐는가.
+#   계획 = Σ(청크 스텝수 / 주파수),  실측 = 첫 청크 큐잉~마지막 펄스 송출 완료
+#   드리프트 = 실측 - 계획 > 0  →  펄스 열이 늘어졌다 = 펄스 스레드가 선점당했다
+# 부하 없이(verify_motor 단독) 0에 가깝고 추적 중에 커진다면 그게 소음의 원인이다.
+# hardware/lgpio_patch.md 참고.
+_TIMING = os.environ.get("MOTOR_TIMING") == "1"
 
 _CHUNK_S = 0.04       # 순항 청크 하나의 재생 시간 (초)
 
@@ -132,6 +141,12 @@ class _Axis:
         self.idle = True
         self._quit = False
         self._sched_end = 0.0  # 큐잉된 펄스가 전부 끝나는 예상 시각 (워커 스레드 전용)
+        # 타이밍 실측 (_TIMING) — 전부 워커 스레드 전용, 락 불필요
+        self._t0 = 0.0          # 이번 구간 첫 청크를 큐에 넣은 시각
+        self._planned = 0.0     # 이번 구간 펄스 열의 이론 재생 시간 합
+        self._chunks = 0
+        self._underruns = 0     # 큐가 비어 펄스가 끊긴 횟수
+        self._underrun_s = 0.0  # 그 총 시간
         self.thread = threading.Thread(target=self._run, daemon=True, name=f"motor-{name}")
         self.thread.start()
 
@@ -202,7 +217,17 @@ class _Axis:
         while lgpio.tx_room(self.h, self.step_pin, lgpio.TX_PWM) < 1:
             time.sleep(0.002)
         lgpio.tx_pwm(self.h, self.step_pin, freq, 50, 0, steps)
-        self._sched_end = max(self._sched_end, time.monotonic()) + steps / freq
+        now = time.monotonic()
+        if self._chunks == 0:
+            self._t0 = now
+        elif now > self._sched_end:
+            # 앞 청크가 이미 다 나가버린 뒤에야 다음 청크를 넣었다 = 펄스가 끊겼다.
+            # (아래 max()가 이걸 조용히 흡수하므로 여기서 세지 않으면 안 보인다)
+            self._underruns += 1
+            self._underrun_s += now - self._sched_end
+        self._planned += steps / freq
+        self._chunks += 1
+        self._sched_end = max(self._sched_end, now) + steps / freq
         with self.cond:
             self.pos_steps += sign * steps
         if self.on_change:   # 청크 하나 나갈 때마다 저장 스레드를 깨운다 (쓰기는 그쪽 몫)
@@ -244,6 +269,8 @@ class _Axis:
 
         remaining = abs(delta)
         climbed: list[int] = []  # 올라간 램프 단계 — 감속 시 역순 재생
+        self._planned = self._underrun_s = 0.0
+        self._chunks = self._underruns = 0
 
         while True:
             decel_reserve = len(climbed) * self.seg_steps
@@ -274,6 +301,17 @@ class _Axis:
             self._emit(f, self.seg_steps, sign)
 
         self._drain()
+
+        # 20ms 미만 구간은 건너뛴다 — 청크 하나(_CHUNK_S=40ms)도 안 되는 잔이동은
+        # 고정 오버헤드가 드리프트 %를 지배해서 숫자가 오해를 부른다.
+        # 줄 앞의 \n: 추적 스크립트가 \r로 상태줄을 덮어쓰며 찍으므로 새 줄에서 시작해야 한다.
+        if _TIMING and self._chunks and self._planned >= 0.02:
+            actual = time.monotonic() - self._t0
+            drift = actual - self._planned
+            print(f"\n[timing:{self.name}] {abs(delta):6d}스텝 청크{self._chunks:3d}  "
+                  f"계획 {self._planned * 1000:7.1f}ms  실측 {actual * 1000:7.1f}ms  "
+                  f"드리프트 {drift * 1000:+7.1f}ms ({100 * drift / self._planned:+5.1f}%)  "
+                  f"언더런 {self._underruns:2d}회 {self._underrun_s * 1000:5.1f}ms", flush=True)
 
 
 class MotorController:

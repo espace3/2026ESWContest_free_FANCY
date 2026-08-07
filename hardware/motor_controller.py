@@ -67,13 +67,8 @@ import lgpio
 
 from hardware.position_store import PositionStore
 
-# MOTOR_TIMING=1 이면 이동 한 구간이 끝날 때마다 펄스 타이밍 실측을 찍는다.
-# 재는 것: 큐에 넣은 펄스가 "명령한 주파수대로" 재생됐는가.
-#   계획 = Σ(청크 스텝수 / 주파수),  실측 = 첫 청크 큐잉~마지막 펄스 송출 완료
-#   드리프트 = 실측 - 계획 > 0  →  펄스 열이 늘어졌다 = 펄스 스레드가 선점당했다
-# 부하 없이(verify_motor 단독) 0에 가깝고 추적 중에 커진다면 그게 소음의 원인이다.
-# hardware/lgpio_patch.md 참고.
-_TIMING = os.environ.get("MOTOR_TIMING") == "1"
+# 펄스 스레드 RT 우선순위. 실기 검증에 쓴 `chrt -f 10`과 같은 값 (lgpio_patch.md).
+_RT_PRIO = 10
 
 _CHUNK_S = 0.04       # 순항 청크 하나의 재생 시간 (초)
 
@@ -101,7 +96,7 @@ def _open_chip_raw() -> int:
     raise RuntimeError("gpiochip을 열 수 없습니다. lgpio 설치를 확인하세요.")
 
 
-def open_chip(pin_pulse_core: bool | None = None) -> int:
+def open_chip(*, pin_pulse_core: bool = True, rt: bool = True) -> int:
     """gpiochip 핸들을 열면서 lgpio 펄스 스레드를 전용 코어에 격리한다.
 
     추적 중 달그락 소음의 원인은 lgpio의 펄스 생성 스레드가 CPU 경쟁에 선점당해
@@ -123,11 +118,18 @@ def open_chip(pin_pulse_core: bool | None = None) -> int:
     프로세스는 여전히 펄스 코어에 올라온다. 완전 격리는 부팅 옵션 isolcpus가
     필요하고, 그래도 부족하면 펄스 스레드 RT 승격을 얹는다.
 
-    MOTOR_PIN=0 이면 끈다 (효과 비교용 — MOTOR_TIMING=1의 드리프트로 판정할 것).
-    """
-    if pin_pulse_core is None:
-        pin_pulse_core = os.environ.get("MOTOR_PIN", "1") != "0"
+    같은 상속이 **스케줄링 정책에도** 적용된다 (glibc의 pthread_create 기본값이
+    PTHREAD_INHERIT_SCHED). 그래서 ①에서 어피니티와 함께 SCHED_FIFO도 걸어두면
+    펄스 스레드만 RT가 되고, ③에서 호출 스레드를 SCHED_OTHER로 되돌리면 그 뒤에
+    만들어지는 워커·저장 스레드는 일반 우선순위로 남는다. 계산을 하지 않는 펄스
+    스레드에만 RT를 주는 것이라 "추적 스크립트 전체를 chrt로 띄우지 말 것"
+    (TFLite가 RT로 돌면 Pi가 멈춘다)이라는 금지와 충돌하지 않는다.
 
+    RT는 rtprio 권한이 필요하다. 없으면 경고만 하고 어피니티만 적용한다.
+
+    pin_pulse_core / rt 를 각각 끌 수 있다 (효과 비교용 — 스크립트에서는
+    --no-pin / --no-rt, 판정은 --timing 의 드리프트로 한다).
+    """
     avail = sorted(os.sched_getaffinity(0))
     if not pin_pulse_core or len(avail) < 2:
         return _open_chip_raw()
@@ -137,9 +139,23 @@ def open_chip(pin_pulse_core: bool | None = None) -> int:
     before = set(os.listdir("/proc/self/task"))
 
     os.sched_setaffinity(0, pulse)
+    rt_on = False
+    if rt:
+        try:
+            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(_RT_PRIO))
+            rt_on = True
+        except (OSError, PermissionError) as e:
+            print(f"[motor] RT 승격 실패({e}) — 어피니티만 적용합니다. 권한을 주려면 "
+                  f"/etc/security/limits.conf 에 "
+                  f"'{os.environ.get('USER', '<user>')}  -  rtprio  {_RT_PRIO + 10}' "
+                  f"추가 후 재로그인.")
     try:
         h = _open_chip_raw()
     finally:
+        # 호출 스레드는 반드시 원상복구 — 안 그러면 이후 만들어지는 워커·저장
+        # 스레드까지 RT가 되고, 저장 스레드의 fsync가 RT로 도는 건 위험하다.
+        if rt_on:
+            os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
         os.sched_setaffinity(0, compute)
 
     moved = 0
@@ -149,10 +165,23 @@ def open_chip(pin_pulse_core: bool | None = None) -> int:
             moved += 1
         except (OSError, ValueError):
             pass                        # 그새 끝난 스레드 — 넘어간다
-    new = len(set(os.listdir("/proc/self/task")) - before)
+
+    # 신규 스레드가 실제로 RT를 물려받았는지 확인해서 찍는다 — 상속이 안 먹으면
+    # (lgpio가 스레드를 늦게 만들거나 sched attr을 직접 지정하면) 여기서 드러난다.
+    new = sorted(set(os.listdir("/proc/self/task")) - before)
+    got_rt = sum(1 for t in new if _policy_of(int(t)) == os.SCHED_FIFO)
     print(f"[motor] 펄스 스레드 → 코어 {sorted(pulse)} 전용, "
-          f"계산 스레드 {moved}개 → 코어 {sorted(compute)} (lgpio 신규 스레드 {new}개)")
+          f"계산 스레드 {moved}개 → 코어 {sorted(compute)} | "
+          f"lgpio 신규 스레드 {len(new)}개, 그중 RT {got_rt}개"
+          f"{'' if rt_on else ' (RT 미적용)'}")
     return h
+
+
+def _policy_of(tid: int) -> int:
+    try:
+        return os.sched_getscheduler(tid)
+    except OSError:
+        return -1
 
 
 class _Axis:
@@ -162,9 +191,11 @@ class _Axis:
     (= 큐에 넣어져 반드시 나가게 될) 위치다.
     """
 
-    def __init__(self, handle: int, name: str, pins: dict, params: dict, spr: int) -> None:
+    def __init__(self, handle: int, name: str, pins: dict, params: dict, spr: int,
+                 timing: bool = False) -> None:
         self.h = handle
         self.name = name
+        self.timing = timing
         self.step_pin = pins["STEP"]
         self.dir_pin = pins["DIR"]
         # 1스텝당 각도: pan(1:100 유성) ≈ 0.001125°, tilt(1:92.6 실측) ≈ 0.00121°
@@ -359,7 +390,7 @@ class _Axis:
         # 20ms 미만 구간은 건너뛴다 — 청크 하나(_CHUNK_S=40ms)도 안 되는 잔이동은
         # 고정 오버헤드가 드리프트 %를 지배해서 숫자가 오해를 부른다.
         # 줄 앞의 \n: 추적 스크립트가 \r로 상태줄을 덮어쓰며 찍으므로 새 줄에서 시작해야 한다.
-        if _TIMING and self._chunks and self._planned >= 0.02:
+        if self.timing and self._chunks and self._planned >= 0.02:
             actual = time.monotonic() - self._t0
             drift = actual - self._planned
             print(f"\n[timing:{self.name}] {abs(delta):6d}스텝 청크{self._chunks:3d}  "
@@ -383,9 +414,11 @@ class MotorController:
     """
 
     def __init__(self, cfg: dict, handle: int | None = None, *,
-                 state_path=None) -> None:
+                 state_path=None, timing: bool = False,
+                 pin_pulse_core: bool = True, rt: bool = True) -> None:
         self._own_handle = handle is None
-        self.h = open_chip() if handle is None else handle
+        self.h = (open_chip(pin_pulse_core=pin_pulse_core, rt=rt)
+                  if handle is None else handle)
         pins = cfg["pins"]
         st = cfg["stepper"]
         spr = st["steps_per_rev"] * st["microstep"]  # 3200 펄스/모터축 1회전
@@ -396,8 +429,8 @@ class MotorController:
         self.en_pin = pins["pan"]["EN"]
         lgpio.gpio_claim_output(self.h, self.en_pin, 1)  # 초기 비활성 (LOW 활성)
 
-        self.pan = _Axis(self.h, "pan", pins["pan"], st["pan"], spr)
-        self.tilt = _Axis(self.h, "tilt", pins["tilt"], st["tilt"], spr)
+        self.pan = _Axis(self.h, "pan", pins["pan"], st["pan"], spr, timing)
+        self.tilt = _Axis(self.h, "tilt", pins["tilt"], st["tilt"], spr, timing)
 
         # ── 장부 영속화 ──────────────────────────────────────────────────────
         ms = cfg.get("motor_state", {})

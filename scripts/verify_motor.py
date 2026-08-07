@@ -153,9 +153,18 @@ def main() -> None:
     ms = CFG.get("motor_state", {})
     parser.add_argument("--state-file", default=ms.get("file", "motor_state.json"),
                         help="모터 위치 상태 파일 (모든 스크립트 공용)")
+    # 추적 중 달그락 소음(lgpio 펄스 스레드 선점) 관련 — hardware/lgpio_patch.md.
+    # 여기서 재는 값이 부하 없는 기준선이 된다 (추적 스크립트와 같은 인자).
+    parser.add_argument("--timing", action="store_true",
+                        help="이동 구간마다 펄스 타이밍 실측 출력 (드리프트·언더런)")
+    parser.add_argument("--no-pin", action="store_true",
+                        help="펄스 스레드 전용 코어 격리를 끈다 (효과 비교용)")
+    parser.add_argument("--no-rt", action="store_true",
+                        help="펄스 스레드 RT 승격을 끈다 (효과 비교용)")
     args = parser.parse_args()
 
-    with MotorController(CFG, state_path=args.state_file) as mc:
+    with MotorController(CFG, state_path=args.state_file, timing=args.timing,
+                         pin_pulse_core=not args.no_pin, rt=not args.no_rt) as mc:
         mv = make_mover(mc, args.axis)
         mc.enable()
         # 저장값이 있으면 그만큼 되돌아와 0°에서 시작한다 (없으면 현재 위치가 0°).

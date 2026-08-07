@@ -66,7 +66,8 @@ class _DryMotor:
     def __exit__(self, *exc) -> None: ...
 
 
-def _open_motor(dry_run: bool, state_path=None):
+def _open_motor(dry_run: bool, state_path=None, *, timing: bool = False,
+                pin_pulse_core: bool = True, rt: bool = True):
     """실모터(MotorController) 또는 드라이런 스텁을 연다. MotorController import를
     이 함수 안으로 미룬 이유: 그 모듈은 최상단에서 lgpio를 import하는데, 개발
     PC(lgpio 없음)에서 --dry-run으로 돌릴 때 최상단 import면 스크립트가 아예
@@ -77,19 +78,30 @@ def _open_motor(dry_run: bool, state_path=None):
         print("[motor] DRY-RUN — 실제 모터를 구동하지 않습니다 (각도 계산만).")
         return _DryMotor()
     from hardware.motor_controller import MotorController
-    return MotorController(CFG, state_path=state_path)
+    return MotorController(CFG, state_path=state_path, timing=timing,
+                           pin_pulse_core=pin_pulse_core, rt=rt)
 
 
 def add_state_args(parser) -> None:
-    """위치 상태 파일 인자 (모터를 구동하는 스크립트 공통)."""
+    """위치 상태 파일 + 펄스 타이밍 인자 (모터를 구동하는 스크립트 공통)."""
     ms = CFG.get("motor_state", {})
     parser.add_argument("--state-file", default=ms.get("file", "motor_state.json"),
                         help="모터 위치 상태 파일 (재시작 시 원점 복원용, 모든 스크립트 공용)")
+    # 아래 셋은 추적 중 달그락 소음(lgpio 펄스 스레드 선점) 관련 — hardware/lgpio_patch.md
+    parser.add_argument("--timing", action="store_true",
+                        help="이동 구간마다 펄스 타이밍 실측 출력 (드리프트·언더런)")
+    parser.add_argument("--no-pin", action="store_true",
+                        help="펄스 스레드 전용 코어 격리를 끈다 (효과 비교용)")
+    parser.add_argument("--no-rt", action="store_true",
+                        help="펄스 스레드 RT 승격을 끈다 (효과 비교용)")
 
 
 def open_motor_from_args(args):
     """add_state_args로 받은 인자대로 모터를 연다."""
-    return _open_motor(args.dry_run, state_path=getattr(args, "state_file", None))
+    return _open_motor(args.dry_run, state_path=getattr(args, "state_file", None),
+                       timing=getattr(args, "timing", False),
+                       pin_pulse_core=not getattr(args, "no_pin", False),
+                       rt=not getattr(args, "no_rt", False))
 
 
 def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,

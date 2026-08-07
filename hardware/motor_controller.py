@@ -91,7 +91,7 @@ _LOOKAHEAD_S = 0.09
 _DIR_SETUP_S = 0.001  # DIR 신호 셋업 타임
 
 
-def open_chip() -> int:
+def _open_chip_raw() -> int:
     """gpiochip 핸들을 연다 (Pi 5는 펌웨어에 따라 헤더 GPIO가 0 또는 4번)."""
     for chip in (0, 4):
         try:
@@ -99,6 +99,60 @@ def open_chip() -> int:
         except lgpio.error:
             continue
     raise RuntimeError("gpiochip을 열 수 없습니다. lgpio 설치를 확인하세요.")
+
+
+def open_chip(pin_pulse_core: bool | None = None) -> int:
+    """gpiochip 핸들을 열면서 lgpio 펄스 스레드를 전용 코어에 격리한다.
+
+    추적 중 달그락 소음의 원인은 lgpio의 펄스 생성 스레드가 CPU 경쟁에 선점당해
+    스텝 간격이 흔들리는 것이다 (실측: 부하 시 펄스 열이 3~7% 늘어짐,
+    hardware/lgpio_patch.md). 그 스레드가 TFLite·카메라와 코어를 다투지 않게 한다.
+
+    스레드는 **만든 쪽의 어피니티 마스크를 물려받는다.** 그래서 tid를 알아낼
+    필요 없이 순서만으로 격리된다:
+
+        ① 호출 스레드를 펄스 코어 하나에 묶고
+        ② gpiochip을 연다 → 이때 lgpio가 만드는 펄스 스레드가 ①을 상속
+        ③ 호출 스레드는 나머지 코어(계산용)로 되돌린다
+        ④ 이미 떠 있던 스레드(TFLite 등)도 계산 코어로 몰아낸다
+           — 스크립트가 모터보다 먼저 detector를 만들기 때문에 ④가 필요하다.
+           순서를 안 고쳐도 되게 하려는 것.
+
+    특권 불필요(RT와 달리 root도 limits.conf도 필요 없다). 다만 이건 **우리
+    프로세스의 스레드만** 통제한다 — 커널 스레드·IRQ·bluetoothd 같은 남의
+    프로세스는 여전히 펄스 코어에 올라온다. 완전 격리는 부팅 옵션 isolcpus가
+    필요하고, 그래도 부족하면 펄스 스레드 RT 승격을 얹는다.
+
+    MOTOR_PIN=0 이면 끈다 (효과 비교용 — MOTOR_TIMING=1의 드리프트로 판정할 것).
+    """
+    if pin_pulse_core is None:
+        pin_pulse_core = os.environ.get("MOTOR_PIN", "1") != "0"
+
+    avail = sorted(os.sched_getaffinity(0))
+    if not pin_pulse_core or len(avail) < 2:
+        return _open_chip_raw()
+
+    pulse = {avail[-1]}                 # 마지막 코어를 펄스 전용으로
+    compute = set(avail) - pulse
+    before = set(os.listdir("/proc/self/task"))
+
+    os.sched_setaffinity(0, pulse)
+    try:
+        h = _open_chip_raw()
+    finally:
+        os.sched_setaffinity(0, compute)
+
+    moved = 0
+    for tid in before:                  # 기존 스레드를 펄스 코어에서 몰아낸다
+        try:
+            os.sched_setaffinity(int(tid), compute)
+            moved += 1
+        except (OSError, ValueError):
+            pass                        # 그새 끝난 스레드 — 넘어간다
+    new = len(set(os.listdir("/proc/self/task")) - before)
+    print(f"[motor] 펄스 스레드 → 코어 {sorted(pulse)} 전용, "
+          f"계산 스레드 {moved}개 → 코어 {sorted(compute)} (lgpio 신규 스레드 {new}개)")
+    return h
 
 
 class _Axis:

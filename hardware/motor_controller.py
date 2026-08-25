@@ -251,6 +251,16 @@ class _Axis:
             self.target_steps = steps
             self.cond.notify_all()
 
+    def stop(self) -> None:
+        """현재 송출 확정 위치에서 더 진행하지 않도록 감속 정지를 요청한다.
+
+        이미 lgpio에 들어간 펄스는 취소하지 않는다. 대신 아직 큐에 들어가지
+        않은 목표만 현재 위치로 되돌려 _execute()가 다음 청크 경계에서
+        정지·감속 경로를 선택하게 한다. 급정지로 장부와 실제 위치가 어긋나는
+        것을 막기 위한 안전 정지다.
+        """
+        self.set_target_steps(self.read_steps())
+
     def read_steps(self) -> int:
         with self.cond:
             return self.pos_steps
@@ -580,6 +590,16 @@ class MotorController:
         # 각도 → 최근접 정수 스텝 (반올림 오차는 1스텝 = pan 0.1125° 미만)
         self.pan.set_target_steps(round(pan_angle_deg / self.pan.deg_per_step))
         self.tilt.set_target_steps(round(tilt_angle_deg / self.tilt.deg_per_step))
+
+    def stop(self) -> None:
+        """두 축에 현재 송출 확정 위치 기준의 감속 정지를 요청한다.
+
+        모드 전환·전원 OFF처럼 새 runner를 시작하기 전에 호출하는 용도다.
+        이미 큐에 들어간 펄스는 안전상 취소하지 않고, 각 축 워커가 감속 후
+        큐를 비운다.
+        """
+        self.pan.stop()
+        self.tilt.stop()
 
     def current_position(self) -> tuple[float, float]:
         """송출 확정 기준 (pan_angle_deg, tilt_angle_deg). 이동 중에는 실제

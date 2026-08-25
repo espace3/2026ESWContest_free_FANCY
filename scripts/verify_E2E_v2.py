@@ -177,12 +177,14 @@ class _ModeSupervisor(_TrackingSupervisor):
     재개 시 즉시 맞는 상태가 되기 때문 (docstring 7).
     """
 
-    def __init__(self, track_fn, sweep_fn, home_fn, park_fn, web_state=None) -> None:
+    def __init__(self, track_fn, sweep_fn, home_fn, park_fn, stop_fn=None,
+                 web_state=None) -> None:
         super().__init__(track_fn, web_state=web_state)
         self._track_fn = track_fn
         self._sweep_fn = sweep_fn
         self._home_fn = home_fn
         self._park_fn = park_fn
+        self._stop_fn = stop_fn
         self._wind_level = 0
 
     def _select_runner(self):
@@ -205,13 +207,26 @@ class _ModeSupervisor(_TrackingSupervisor):
         if (run_fn is self._run_fn and self._thread is not None
                 and self._thread.is_alive() and not self._stop_event.is_set()):
             return
+        if run_fn is not self._run_fn and self._thread is not None \
+                and self._thread.is_alive():
+            # 이전 runner가 다음 50ms tick까지 새 목표를 던지지 못하도록
+            # 먼저 중단 신호와 모터 감속 정지를 전달한 뒤 join한다.
+            self._stop_event.set()
+            if self._stop_fn is not None:
+                self._stop_fn()
         self._run_fn = run_fn
         super()._apply()
 
+    def set_state(self, power_on: bool, mode: int, wind_level: int) -> None:
+        """power/mode/wind를 한 상태로 갱신한 뒤 runner를 재선택한다."""
+        self._power_on = power_on
+        self._mode = mode
+        self._wind_level = wind_level
+        self._apply()
+
     def set_wind(self, level: int) -> None:
         """풍속 변화 통지 — 러너가 안 바뀌면 _apply 데드업이 무시한다."""
-        self._wind_level = level
-        self._apply()
+        self.set_state(self._power_on, self._mode, level)
 
 
 class EswFanServiceV2(Service):
@@ -231,12 +246,17 @@ class EswFanServiceV2(Service):
         self._mode = 0x00
         self._last_level = 0     # 마지막 수신 세기 — 게이트가 열릴 때 재적용
 
+    def _apply_state(self) -> int:
+        """현재 BLE 상태를 릴레이와 모터 supervisor에 함께 적용한다."""
+        level = self._last_level if (self._power_on and self._mode != 0x03) else 0
+        self._fan.set_speed(level)
+        self._supervisor.set_state(self._power_on, self._mode, self._last_level)
+        return level
+
     def _apply_wind(self) -> int:
         """게이트 상태대로 릴레이에 반영하고, 적용된 세기를 돌려준다.
         전원 OFF 또는 부위 모드(0x03)면 0(정지) — docstring 2."""
-        level = self._last_level if (self._power_on and self._mode != 0x03) else 0
-        self._fan.set_speed(level)
-        return level
+        return self._apply_state()
 
     # write-only 특성도 getter 자리(placeholder)가 필요 — 읽기 시도 시에만 쓰인다.
     @characteristic(POWER_UUID, CharFlags.WRITE)
@@ -251,7 +271,6 @@ class EswFanServiceV2(Service):
         self._power_on = bool(value[0])
         level = self._apply_wind()
         print(f"[RX] 전원: {'ON' if self._power_on else 'OFF'} → 풍속 {level}단 적용")
-        self._supervisor.set_power(self._power_on)
 
     @characteristic(MODE_UUID, CharFlags.WRITE)
     def mode(self, options):
@@ -265,7 +284,6 @@ class EswFanServiceV2(Service):
         self._mode = value[0]
         level = self._apply_wind()  # 부위 모드 진입 시 0, 이탈 시 저장 세기 재적용
         print(f"[RX] 모드: {MODE_NAMES[value[0]]} → 풍속 {level}단 적용")
-        self._supervisor.set_mode(value[0])
 
     @characteristic(WIND_UUID, CharFlags.WRITE)
     def wind(self, options):
@@ -288,7 +306,6 @@ class EswFanServiceV2(Service):
         level_txt = "정지" if value[1] == 0 else f"{value[1]}단"
         # 대상은 로그만 — 부위별 풍향/대상별 풍속 중재는 4단계 몫 (docstring 6).
         print(f"[RX] 풍량: {WIND_TARGETS[value[0]]} {level_txt} → {note}")
-        self._supervisor.set_wind(value[1])  # 회전 스윕 시작/정지 판단용 (docstring 7)
 
     # 상태(notify)는 4단계에서 에코백 구현 — 지금은 서비스 발견용으로만 등록.
     @characteristic(STATUS_UUID, CharFlags.NOTIFY)
@@ -303,7 +320,6 @@ class EswFanServiceV2(Service):
         print("[BLE] 연결 끊김 → 전원 OFF 처리 (풍속 정지 + 0°,0° 파킹)")
         self._power_on = False
         self._apply_wind()
-        self._supervisor.set_power(False)
 
 
 async def _watch_disconnects(bus, service: EswFanServiceV2) -> None:
@@ -461,6 +477,7 @@ def main() -> None:
                 supervisor = _ModeSupervisor(track_fn, _make_sweeper(mc, args),
                                              _make_homer(mc, home_pan=False),
                                              _make_homer(mc, home_pan=True),
+                                             stop_fn=mc.stop,
                                              web_state=web_state)
                 service = EswFanServiceV2(supervisor, fan)
 

@@ -94,9 +94,9 @@ _LOOKAHEAD_S = 0.09
 
 _DIR_SETUP_S = 0.001  # DIR 신호 셋업 타임
 
-# lgpio TX 큐가 정상이라면 한 청크(최대 _CHUNK_S) 안에 busy가 풀린다.
-# 이 시간을 넘겨도 busy이면 큐가 고착된 것으로 보고 PWM을 off로 재설정한다.
-_TX_WAIT_TIMEOUT_S = 0.25
+# 정상 청크 재생 시간에 더할 최소 여유. 고정 짧은 timeout은 저속 청크나
+# RPi 스케줄링 지연을 고착으로 오판할 수 있으므로 실제 청크 길이와 함께 쓴다.
+_TX_WAIT_GRACE_S = 1.0
 
 
 def _open_chip_raw() -> int:
@@ -326,9 +326,9 @@ class _Axis:
             lgpio.gpio_write(self.h, self.step_pin, 0)
             self._sched_end = time.monotonic()
 
-    def _wait_tx_idle(self) -> None:
+    def _wait_tx_idle(self, timeout: float = _TX_WAIT_GRACE_S) -> None:
         """현재 청크가 끝날 때까지 기다리되, lgpio TX 고착은 복구한다."""
-        deadline = time.monotonic() + _TX_WAIT_TIMEOUT_S
+        deadline = time.monotonic() + timeout
         while True:
             if not lgpio.tx_busy(self.h, self.step_pin, lgpio.TX_PWM):
                 return
@@ -346,7 +346,10 @@ class _Axis:
         경우에는 한 축에 한 청크만 두는 편이 재계획 안정성이 높고, TX 큐가
         고착되어 영원히 tx_room()을 기다리는 문제도 피할 수 있다.
         """
-        self._wait_tx_idle()
+        # 실제 PWM 재생 시간의 몇 배까지는 정상으로 허용한다. 특히 f_start
+        # 구간은 저속이므로 고정 timeout을 쓰면 정상 펄스를 끊을 수 있다.
+        expected = steps / max(freq, 1)
+        self._wait_tx_idle(max(_TX_WAIT_GRACE_S, expected * 4.0))
         lgpio.tx_pwm(self.h, self.step_pin, freq, 50, 0, steps)
         now = time.monotonic()
         if self._chunks == 0:
@@ -369,7 +372,7 @@ class _Axis:
         rest = self._sched_end - time.monotonic()
         if rest > 0:
             time.sleep(rest)
-        self._wait_tx_idle()
+        self._wait_tx_idle(_TX_WAIT_GRACE_S)
 
     def _retarget(self, sign: int, decel_reserve: int):
         """선점 시 새 목표 판정. 진행 방향 그대로면서 감속 여유(decel_reserve)가

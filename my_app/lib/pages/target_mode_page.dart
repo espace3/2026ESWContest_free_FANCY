@@ -19,9 +19,9 @@ class TargetModePage extends StatefulWidget {
 }
 
 class _TargetModePageState extends State<TargetModePage> {
-  int _windStrength = 1;
+  int _windStrength = 0;
   bool _bodyMode = false;
-  final _bodyStrengths = <String, int>{'머리': 1, '상체': 1, '하체': 1};
+  final _bodyStrengths = <String, int>{'머리': 0, '상체': 0, '하체': 0};
 
   @override
   Widget build(BuildContext context) {
@@ -36,21 +36,30 @@ class _TargetModePageState extends State<TargetModePage> {
           child: ListTile(
             leading: Icon(Icons.person_search, color: colors.outline),
             title: const Text('인식 대기 중'),
-            subtitle: const Text('BLE 연동 후 실제 상태가 표시됩니다'),
+            subtitle: const Text('BLE 연동 후 표시됩니다'),
           ),
         ),
         const SizedBox(height: 24),
-        Text('바람 세기', style: Theme.of(context).textTheme.titleMedium),
-        if (_bodyMode) ...[
-          const SizedBox(height: 4),
-          Text(
-            '부위 인식 모드 사용 중에는 부위별 세기가 적용됩니다',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: colors.outline),
-          ),
-        ],
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text('바람 세기', style: Theme.of(context).textTheme.titleMedium),
+            if (_bodyMode) ...[
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '부위별 세기가 적용됩니다',
+                  textAlign: TextAlign.end,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: colors.outline),
+                ),
+              ),
+            ],
+          ],
+        ),
         const SizedBox(height: 8),
         WindStrengthSelector(
           value: _windStrength,
@@ -64,7 +73,7 @@ class _TargetModePageState extends State<TargetModePage> {
         const SizedBox(height: 24),
         SwitchListTile(
           title: const Text('부위 인식 모드'),
-          subtitle: const Text('머리·상체·하체 부위별 바람 세기 설정'),
+          subtitle: const Text('부위별 바람 세기 설정'),
           value: _bodyMode,
           onChanged: (value) {
             setState(() => _bodyMode = value);
@@ -74,19 +83,27 @@ class _TargetModePageState extends State<TargetModePage> {
         if (_bodyMode)
           for (final part in _bodyStrengths.keys)
             Padding(
-              padding: const EdgeInsets.only(top: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.only(top: 12),
+              child: Row(
                 children: [
-                  Text(part, style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  WindStrengthSelector(
-                    value: _bodyStrengths[part]!,
-                    onChanged: (value) {
-                      setState(() => _bodyStrengths[part] = value);
-                      BleConnectionService.instance
-                          .writeWind(_bodyPartTargetByte[part]!, value);
-                    },
+                  SizedBox(
+                    width: 36,
+                    child: Text(
+                      part,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: WindStrengthSelector(
+                      value: _bodyStrengths[part]!,
+                      disabledLevels: part == '상체' ? {0} : const {},
+                      onChanged: (value) {
+                        setState(() => _bodyStrengths[part] = value);
+                        BleConnectionService.instance
+                            .writeWind(_bodyPartTargetByte[part]!, value);
+                      },
+                    ),
                   ),
                 ],
               ),

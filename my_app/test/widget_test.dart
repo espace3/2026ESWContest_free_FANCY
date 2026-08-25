@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_app/app.dart';
+import 'package:my_app/pages/basic_mode_page.dart';
 import 'package:my_app/pages/target_mode_page.dart';
 import 'package:my_app/services/ble/ble_connection_service.dart';
 
@@ -67,6 +68,21 @@ void main() {
     for (final selector in selectors.skip(1)) {
       expect(selector.onSelectionChanged, isNotNull);
     }
-    expect(find.text('부위 인식 모드 사용 중에는 부위별 세기가 적용됩니다'), findsOneWidget);
+    expect(find.text('부위별 세기가 적용됩니다'), findsOneWidget);
+  });
+
+  testWidgets('풍량 선택기에 정지 상태가 표시된다', (tester) async {
+    await turnOn(tester);
+
+    expect(find.text('정지'), findsOneWidget);
+    await tester.tap(find.text('정지'));
+    await tester.pump();
+
+    final selector = tester
+        .widget<SegmentedButton<int>>(find.descendant(
+          of: find.byType(BasicModePage),
+          matching: find.byType(SegmentedButton<int>),
+        ));
+    expect(selector.selected, {0});
   });
 }

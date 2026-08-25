@@ -16,7 +16,7 @@ class BasicModePage extends StatefulWidget {
 
 class _BasicModePageState extends State<BasicModePage> {
   bool _rotating = false;
-  int _windStrength = 1;
+  int _windStrength = 0;
 
   @override
   Widget build(BuildContext context) {

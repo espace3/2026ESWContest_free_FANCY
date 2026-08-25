@@ -207,6 +207,7 @@ class _BleScanPageState extends State<BleScanPage> {
           button('전원 OFF', () => _ble.writePower(false)),
           button('모드: 회전', () => _ble.writeMode(0x01)),
           button('모드: 타겟', () => _ble.writeMode(0x02)),
+          button('풍량: 정지', () => _ble.writeWind(0x00, 0x00)),
           button('풍량: 공용 2단', () => _ble.writeWind(0x00, 0x02)),
           button('풍량: 머리 3단', () => _ble.writeWind(0x01, 0x03)),
         ],
@@ -248,7 +249,7 @@ class _BleScanPageState extends State<BleScanPage> {
       });
     return Scaffold(
       appBar: AppBar(
-        title: const Text('BLE 연결 (디버그)'),
+        title: const Text('BLE 연결'),
         actions: [
           TextButton.icon(
             onPressed: _busy ? null : _toggleScan,

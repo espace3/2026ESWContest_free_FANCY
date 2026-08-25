@@ -21,6 +21,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const _modeNames = ['기본 모드', '타겟 모드'];
   static const _switchDuration = Duration(milliseconds: 350);
+  // TODO(temporary): BLE 없이 조작 화면을 확인할 때만 true로 둔다.
+  static const _allowOfflinePreview = false;
 
   final _pageController = PageController();
   final _ble = BleConnectionService.instance;
@@ -81,7 +83,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final next = !_powerOn;
     // 전송이 실제로 성공했을 때만 화면 상태를 바꾼다 — 실패를 조용히 넘기면
     // "화면은 켜졌는데 선풍기는 꺼져 있는" 불일치가 생긴다.
-    final ok = await _ble.writePower(next);
+    final ok = !_ble.isConnected && _allowOfflinePreview
+        ? true
+        : await _ble.writePower(next);
     if (!mounted) return;
     if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -125,8 +129,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           scale: _powerOn ? 0.3 : 1,
           alignment: Alignment.topLeft,
           child: IconButton.filled(
-            tooltip: _ble.isConnected ? (_powerOn ? '전원 끄기' : '전원 켜기') : 'BLE 연결 필요',
-            onPressed: _ble.isConnected ? _togglePower : null,
+            tooltip: _ble.isConnected
+                ? (_powerOn ? '전원 끄기' : '전원 켜기')
+                : (_allowOfflinePreview ? '오프라인 미리보기' : 'BLE 연결 필요'),
+            onPressed: _ble.isConnected || _allowOfflinePreview
+                ? _togglePower
+                : null,
             iconSize: 96,
             padding: const EdgeInsets.all(32),
             icon: const Icon(Icons.power_settings_new),

@@ -16,7 +16,8 @@ cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 �
      WIND write는 저장만 하고 돌리지 않는다. 전원/모드에 따른 추적 시작·정지는
      v1의 _TrackingSupervisor 그대로.
      부위 모드(0x03)도 같은 규칙으로 게이팅한다 — 진입 시 풍속 0(정지),
-     부위 모드 중 WIND write는 저장만, 이탈 시(전원 ON이면) 저장 세기 재적용.
+     부위 모드 중 WIND write는 저장만, 이탈 시(전원 ON이면) 해당 모드의
+     저장 세기를 재적용한다. 기본/타겟 풍량도 서로 분리해 보관한다.
      부위별 풍속 중재가 미구현이라(아래 6) 부위 모드에서는 아예 돌리지 않는
      게 안전하기 때문.
   3. WIND 세기 0x00 = 풍량 정지 허용 — 프로토콜 원문(ble_protocol.md)은
@@ -27,9 +28,9 @@ cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 �
      따라서 FanRelay는 mc보다 먼저 닫혀야 한다 (with 중첩 순서가 그 보장).
   5. --dry-run이면 릴레이도 스텁(_DryRelay, print만)으로 대체 — 개발 PC에서
      lgpio 없이 파이프라인 확인 가능 (FanRelay import도 그래서 지연).
-  6. WIND [대상, 세기]에서 대상(공용/머리/상체/하체)은 여전히 로그만 —
+     6. WIND [대상, 세기]의 대상은 모드별 preset 저장에 사용한다 —
      부위별 풍향(머리/상체/하체 개별 조준)과 대상별 풍속 중재(프로토콜
-     §3.3 저장/적용)는 미구현으로 4단계 상위 통합부 몫.
+     §3.3의 실제 적용)는 미구현으로 4단계 상위 통합부 몫.
   7. 기본-회전 모드(0x01) 구현 — v1은 타겟 모드에서만 스레드를 돌렸지만,
      v2는 회전 모드에서 pan을 원점(0°) 기준 ±(--rotate-span)° 왕복 스윕한다
      (tilt는 0° 유지, 카메라/디텍터 미사용). 각도는 move_to()의 절대각 =
@@ -244,13 +245,33 @@ class EswFanServiceV2(Service):
         self._fan = fan
         self._power_on = False   # 시작 시 전원 OFF 가정 (앱이 POWER ON을 먼저 보냄)
         self._mode = 0x00
-        self._last_level = 0     # 마지막 수신 세기 — 게이트가 열릴 때 재적용
+        self._basic_level = 0
+        self._target_level = 0
+        self._body_levels = {target: 0 for target in (0x01, 0x02, 0x03)}
+
+    def _active_level(self) -> int:
+        """현재 모드에서 사용할 저장 풍량을 반환한다."""
+        if self._mode in (0x00, 0x01):
+            return self._basic_level
+        if self._mode == 0x02:
+            return self._target_level
+        return self._body_levels.get(0x01, 0)
+
+    def _store_wind(self, target: int, level: int) -> None:
+        """현재 모드와 대상에 맞는 풍량 preset을 갱신한다."""
+        if self._mode in (0x00, 0x01):
+            self._basic_level = level
+        elif self._mode == 0x02 or target == 0x00:
+            self._target_level = level
+        else:
+            self._body_levels[target] = level
 
     def _apply_state(self) -> int:
         """현재 BLE 상태를 릴레이와 모터 supervisor에 함께 적용한다."""
-        level = self._last_level if (self._power_on and self._mode != 0x03) else 0
+        stored_level = self._active_level()
+        level = stored_level if (self._power_on and self._mode != 0x03) else 0
         self._fan.set_speed(level)
-        self._supervisor.set_state(self._power_on, self._mode, self._last_level)
+        self._supervisor.set_state(self._power_on, self._mode, stored_level)
         return level
 
     def _apply_wind(self) -> int:
@@ -295,7 +316,7 @@ class EswFanServiceV2(Service):
         if len(value) != 2 or value[0] not in WIND_TARGETS or not 0 <= value[1] <= 3:
             print(f"[RX] 풍량: 잘못된 값 ({_hex(value)})")
             return
-        self._last_level = value[1]
+        self._store_wind(value[0], value[1])
         if not self._power_on:
             note = "전원 OFF — 저장만 (ON 시 적용)"
         elif self._mode == 0x03:
@@ -303,9 +324,12 @@ class EswFanServiceV2(Service):
         else:
             self._apply_wind()
             note = "릴레이 적용"
+        applied = self._active_level() if self._mode != 0x03 else 0
         level_txt = "정지" if value[1] == 0 else f"{value[1]}단"
-        # 대상은 로그만 — 부위별 풍향/대상별 풍속 중재는 4단계 몫 (docstring 6).
-        print(f"[RX] 풍량: {WIND_TARGETS[value[0]]} {level_txt} → {note}")
+        # 대상별 preset은 저장하지만, 실제 부위별 풍향/풍속 중재는 아직
+        # 4단계 상위 통합부 몫이다 (docstring 6).
+        print(f"[RX] 풍량: {WIND_TARGETS[value[0]]} {level_txt} → {note} "
+              f"(현재 적용 {applied}단)")
 
     # 상태(notify)는 4단계에서 에코백 구현 — 지금은 서비스 발견용으로만 등록.
     @characteristic(STATUS_UUID, CharFlags.NOTIFY)
@@ -392,7 +416,7 @@ def main() -> None:
     p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
                    help="--axis tilt 전용 조준 부위")
     # ── 기본-회전 모드 (0x01) 스윕 ───────────────────────────────────────────
-    p.add_argument("--rotate-span", type=float, default=30.0,
+    p.add_argument("--rotate-span", type=float, default=60.0,
                    help="회전 모드 pan 스윕 반각 — 0° 기준 ±° (docstring 7)")
     p.add_argument("--rotate-speed", type=float, default=20.0,
                    help="회전 모드 스윕 속도 (°/s)")

@@ -94,11 +94,6 @@ _LOOKAHEAD_S = 0.09
 
 _DIR_SETUP_S = 0.001  # DIR 신호 셋업 타임
 
-# 정상 청크 재생 시간에 더할 최소 여유. 고정 짧은 timeout은 저속 청크나
-# RPi 스케줄링 지연을 고착으로 오판할 수 있으므로 실제 청크 길이와 함께 쓴다.
-_TX_WAIT_GRACE_S = 1.0
-
-
 def _open_chip_raw() -> int:
     """gpiochip 핸들을 연다 (Pi 5는 펌웨어에 따라 헤더 GPIO가 0 또는 4번)."""
     for chip in (0, 4):
@@ -313,43 +308,17 @@ class _Axis:
         with self.cond:
             return self._quit or self.target_steps != planned_target
 
-    def _reset_tx(self) -> None:
-        """고착된 PWM을 끊고 다음 청크를 새로 시작할 수 있게 한다.
-
-        lgpio에는 별도의 tx_clear API가 없으므로 주파수 0 PWM을 stop 명령으로
-        사용한다. 한 축의 TX만 초기화하며, gpiochip 핸들이나 BLE/카메라에는
-        영향을 주지 않는다.
-        """
-        try:
-            lgpio.tx_pwm(self.h, self.step_pin, 0, 0, 0, 0)
-        finally:
-            lgpio.gpio_write(self.h, self.step_pin, 0)
-            self._sched_end = time.monotonic()
-
-    def _wait_tx_idle(self, timeout: float = _TX_WAIT_GRACE_S) -> None:
-        """현재 청크가 끝날 때까지 기다리되, lgpio TX 고착은 복구한다."""
-        deadline = time.monotonic() + timeout
-        while True:
-            if not lgpio.tx_busy(self.h, self.step_pin, lgpio.TX_PWM):
-                return
-            if time.monotonic() >= deadline:
-                print(f"\n[motor:{self.name}] PWM TX 응답 없음 — 큐 재초기화 후 재개",
-                      flush=True)
-                self._reset_tx()
-                return
-            time.sleep(0.002)
-
     def _emit(self, freq: int, steps: int, sign: int) -> None:
-        """청크 하나를 송출하고 위치 장부에 확정 기록한다.
-
-        PWM 큐를 여러 개 미리 쌓지 않는다. 추적처럼 목표가 자주 바뀌는
-        경우에는 한 축에 한 청크만 두는 편이 재계획 안정성이 높고, TX 큐가
-        고착되어 영원히 tx_room()을 기다리는 문제도 피할 수 있다.
-        """
-        # 실제 PWM 재생 시간의 몇 배까지는 정상으로 허용한다. 특히 f_start
-        # 구간은 저속이므로 고정 timeout을 쓰면 정상 펄스를 끊을 수 있다.
-        expected = steps / max(freq, 1)
-        self._wait_tx_idle(max(_TX_WAIT_GRACE_S, expected * 4.0))
+        """청크 하나를 큐잉하고 위치 장부에 확정 기록한다. 큐가 _LOOKAHEAD_S
+        이상 쌓여 있으면 빠질 때까지 기다린다 — 기다리는 동안에도 이미 큐잉된
+        펄스는 끊기지 않고 재생 중이므로 모터는 멈추지 않는다."""
+        while True:
+            ahead = self._sched_end - time.monotonic()
+            if ahead <= _LOOKAHEAD_S:
+                break
+            time.sleep(min(ahead - _LOOKAHEAD_S, 0.01))
+        while lgpio.tx_room(self.h, self.step_pin, lgpio.TX_PWM) < 1:
+            time.sleep(0.002)
         lgpio.tx_pwm(self.h, self.step_pin, freq, 50, 0, steps)
         now = time.monotonic()
         if self._chunks == 0:
@@ -372,7 +341,8 @@ class _Axis:
         rest = self._sched_end - time.monotonic()
         if rest > 0:
             time.sleep(rest)
-        self._wait_tx_idle(_TX_WAIT_GRACE_S)
+        while lgpio.tx_busy(self.h, self.step_pin, lgpio.TX_PWM):
+            time.sleep(0.005)
 
     def _retarget(self, sign: int, decel_reserve: int):
         """선점 시 새 목표 판정. 진행 방향 그대로면서 감속 여유(decel_reserve)가

@@ -20,7 +20,8 @@
 #   먼저 로드된다. venv를 새로 만들어도 패치가 유지된다.
 #
 # 되돌리기 (원본 백업 불필요 — 시스템 파일 무수정이므로 사본 삭제가 곧 원복):
-#   sudo rm -f /usr/local/lib/liblgpio.* /usr/local/lib/liblgrpio.*
+#   sudo rm -f /usr/local/lib/liblgpio.* /usr/local/lib/liblgrpio.* \
+#              /usr/local/lib/aarch64-linux-gnu/liblgpio.*
 #   sudo ldconfig
 #
 # 사용법 (Pi에서, verify 스크립트를 돌리는 그 venv를 활성화한 채):
@@ -127,9 +128,14 @@ assert "pthTxDelayMicros < 0" in patched and "sleepErr != EINTR" in patched
 print("   패치 완료 (클램프 + sleep 재동기화 + 마커)")
 PYEOF
 
-echo "== 3/5 빌드·설치 (/usr/local/lib — 시스템 파일 무수정)"
+echo "== 3/5 빌드·설치 (시스템 파일 무수정)"
 make -C "$SRC_DIR" -j"$(nproc)"
 sudo make -C "$SRC_DIR" install
+# trixie는 ld.so.conf.d를 알파벳순으로 읽어 multiarch conf의 /lib/aarch64-linux-gnu(2순위)가
+# libc.conf의 /usr/local/lib(5순위)보다 앞선다 → make install 위치만으로는 구본에 진다.
+# 검색 1순위인 /usr/local/lib/aarch64-linux-gnu에도 설치해 우선순위를 확보한다 (실기 확인 2026-08-25).
+sudo install -d /usr/local/lib/aarch64-linux-gnu
+sudo install -m 0755 "$SRC_DIR/liblgpio.so.1" /usr/local/lib/aarch64-linux-gnu/
 sudo ldconfig
 
 echo "== 4/5 실제 로드되는 라이브러리가 패치본인지 확인"

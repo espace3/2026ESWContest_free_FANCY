@@ -54,6 +54,41 @@ motor_controller.py 본구현(논블로킹) 이후 남은 결정·검증 사항.
       --track-sim(20Hz 목표 갱신에서 순항 도달·최종 장부 일치), 순항 체류 증가에
       따른 조용한 탈조 감시(종료 시 0° 복귀 ↔ 시작 마커, lgpio_patch.md 잔여 위험).
 
+- [ ] **타겟 추적 중 팬·틸트 동시 정지 원인 분석** (2026-08-25 실기 재현):
+      `verify_E2E_v2.py --rpicam --no-window --web --axis pantilt`를 약 20초 이상
+      실행하면 카메라/MoveNet과 BLE·릴레이는 계속 동작하지만 팬·틸트 모터만
+      더 이상 움직이지 않는 현상이 있음. `py-spy dump`를 정지 상태에서 2회
+      수 초 간격으로 확인한 결과, 두 스냅샷 모두 다음 상태가 유지됨:
+      팬 워커는 `motor_controller.py:_emit()`의 `lgpio.tx_room()` 대기,
+      틸트 워커는 `_drain()`의 `lgpio.tx_busy()` 대기. 추적 스레드는
+      `tflite_runtime.interpreter.invoke()` 안에 있었고, 릴레이 워커는 정상
+      대기 중이었으므로 MoveNet/카메라/릴레이 프리징은 현재 증거상 배제함.
+      `Ctrl+C` 후 출력된 `lgpio.error: unknown handle`은 종료 과정에서
+      gpiochip 핸들을 닫은 뒤 남은 모터 워커가 조회해서 생긴 2차 오류이며,
+      원인 오류로 해석하지 않는다.
+      **아직 미확정**: lgpio 내부 TX가 완료되지 않은 것인지, 20Hz 목표 갱신과
+      선행 PWM 큐/감속·drain 재계획 조합이 큐를 고착시키는 것인지 구분 필요.
+      **다음 검증**: 동작 코드를 바꾸기 전에 정지 순간 `py-spy dump`로
+      워커 위치를 재확인하고, `tx_room/tx_busy`의 실제 값·마지막 `tx_pwm`
+      실행/완료 시각을 진단용으로 수집한다. 정상 실행을 고착으로 오판해
+      초기화하지 않도록, 원인 확정 전 timeout·자동 reset은 적용하지 않는다.
+      **관측 로그 요약**:
+      ```text
+      [18:10:41] TRACK ... pan=-4.46°>-6.54° tilt=+1.00°>+1.56° fps=23.4
+      [E2E] 이전 추적 스레드 정리 중...
+      [E2E] 추적 시작
+      ```
+      정지 후 `py-spy dump --pid 3304`를 수 초 간격으로 2회 실행한 결과:
+      ```text
+      Thread "motor-pan":  _emit (motor_controller.py:321)
+      Thread "motor-tilt": _drain (motor_controller.py:345)
+      Thread "Thread-4 (_thread_main)":
+          tflite_runtime.interpreter.invoke → infer → run_pantilt_tracking
+      Thread "fan-relay": wait (relay_controller.py:135)
+      ```
+      두 dump에서 팬/틸트 워커 위치가 동일했고, 이후 `Ctrl+C` 때만
+      `lgpio.error: unknown handle`이 출력되었다.
+
 - [x] **lgpio 펄스 스레드 선점 → 달그락 소음 (2026-08-07 해결)**: 원인은 펄스
       스레드가 SCHED_OTHER라 CPU 초과 구독 시 선점당해 스텝 간격이 흔들리는 것.
       대책을 `motor_controller.open_chip()`에 넣었다 — 스레드의 어피니티·스케줄링

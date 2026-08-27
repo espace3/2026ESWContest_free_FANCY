@@ -10,8 +10,8 @@ scripts/verify_E2E_v3.py의 부위 러너가 사용한다.
     프로토콜상 세기 0이 불가라(ble_protocol.md §3.3) 웨이포인트만 잡히면
     경로가 비는 일은 없다.
   - patrol_wind_level: 풍속 중재 — 순찰(patrol) 중 조준 부위의 저장 세기,
-    그 외 상태(scan/recenter/search)는 0. 조준이 확정되지 않은 동안 엉뚱한
-    부위에 바람이 가는 것을 막는다.
+    조준이 확정되지 않은 상태(scan/recenter/search)는 공용 세기(추적 모드와
+    동일 풍속). 부위별 세기는 겨누는 부위가 확정된 동안에만 쓴다.
   - MotionGate: 순찰 ↔ 추적 폴백 전환 판정.
 """
 
@@ -61,11 +61,21 @@ class BodyPatrolScenario(FullBodyScenario):
         return super().step(obs)
 
 
-def patrol_wind_level(scenario: FullBodyScenario, levels: dict[str, int]) -> int:
-    """순찰 중 조준 부위의 세기, 그 외 상태는 0 (모듈 docstring 참고)."""
-    if scenario.state != "patrol":
-        return 0
-    return levels.get(scenario.active_region(), 0)
+def patrol_wind_level(scenario: FullBodyScenario, levels: dict[str, int],
+                      common_level: int = 0) -> int:
+    """순찰 중 조준 부위의 세기, 조준이 확정되지 않은 상태는 common_level.
+
+    부위별 세기는 "지금 이 부위를 겨누고 있다"가 확정된 순찰에서만 의미가 있다.
+    스캔/탐색/재조준 중에는 헤드가 부위를 훑는 중이라 지정하지 않은 부위로
+    바람이 갈 수 있으므로 부위별 세기를 쓰지 않고, 대신 공용 세기(추적 모드와
+    같은 풍속)를 유지한다 — 조준 미확정 구간은 일반 추적과 동일 취급이라는
+    규칙 하나로 폴백과 통일한 것 (실기 2026-08-27: 스캔 중 정지가 부자연스러움).
+    """
+    if scenario.state == "patrol":
+        region = scenario.active_region()
+        if region in levels:
+            return levels[region]
+    return common_level
 
 
 class MotionGate:

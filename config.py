@@ -96,7 +96,7 @@ CFG: dict = {
             "gear_ratio": 100,     # 유성 기어 모터 (아래 주석 값은 1 기준)
             "dir_for_positive": 0, # 확인 완료
             "f_start": 800,        # 700
-            "f_max": 6000,         # 2000
+            "f_max": 7000,         # 2000
             "ramp_segments": 12,
             "ramp_steps_per_seg": 60, # 90
         },
@@ -106,7 +106,7 @@ CFG: dict = {
             "gear_ratio": 92.6,
             "dir_for_positive": 0, # 정면 설정 완료 (2026-07-10)
             "f_start": 800,
-            "f_max": 4000,
+            "f_max": 6000,
             "ramp_segments": 12,
             "ramp_steps_per_seg": 60,
         },

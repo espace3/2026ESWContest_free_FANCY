@@ -29,9 +29,16 @@ verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레
        순찰(patrol): BodyPatrolScenario(control/body_wind.py)가 head→upper→
          lower 순회(세기 0 부위 제외, 스캔은 전 부위). 순찰 중 조준 부위의
          저장 세기를 릴레이에 적용, 스캔/탐색/재조준 중엔 풍속 0.
-       추적 폴백(fallback): 가슴 수평 오차 > --body-exit-deg 연속 프레임이면
-         전환 — 가슴 중심 조준(타겟 모드와 같은 피드백)에 상체 세기 적용
-         (가슴 조준 ≈ 상체). 팬 각이 --body-still-s 동안 잠잠하면 순찰 재개.
+       추적 폴백(fallback): 순찰 안정 상태에서 최근 --body-exit-window 동안
+         팬 이동량 > --body-exit-deg면 전환 (팬은 사용자를 따라갈 때만 움직여
+         헤드 자체 스윙에 면역 — control/body_wind.py MotionGate 참고).
+         가슴 중심 조준(타겟 모드와 같은 피드백)에 **공용 세기** 적용
+         (유효 모드가 추적이므로 풍속도 추적 모드와 동일 — 리모컨 주체 일관).
+         팬 각이 --body-still-s 동안 잠잠하면 순찰 재개.
+       조준 편향(--body-head-bias/--body-upper-bias): 부위 간 틸트 간격이
+         실기에서 작아(거리 2m에 머리↔상체 ~10° + 틸트 리밋 ±15°) 머리는
+         위로, 상체는 아래로 관측 좌표를 편향해 간격을 벌린다
+         (control/body_wind.py aim_bias_norm 참고).
      러너 교체가 아니라 내부 상 전환이라 카메라 세션이 안 끊기고, 전환마다
      유효 모드 push [0x03, 모드]가 나간다. 폴백 중 가슴을 잃으면 마지막 조준을
      유지한다(재탐색 스윕은 순찰 상의 search 몫 — 알려진 한계).
@@ -140,8 +147,17 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             fov_h, fov_v, args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
             gain=gain_pan, gain_tilt=gain_tilt,
             invert_pan=args.invert, invert_tilt=args.invert_tilt,
-            dwell_s=args.body_dwell)  # 나머지 시나리오 파라미터는 fulltrack 기본값
-        gate = MotionGate(args.body_exit_deg, args.body_exit_frames,
+            dwell_s=args.body_dwell,
+            # 스캔 단축 튜닝 (실기 2026-08-27: 기본값이 너무 느림) — 수렴 판정
+            # 완화 + 미검출 타임아웃 단축 + 블라인드 스윕 가속.
+            converge_deg=args.body_converge,
+            converge_frames=args.body_converge_frames,
+            occl_frames=args.body_occl_frames,
+            blind_deg=args.body_blind_deg,
+            # 조준 편향: 머리는 위로, 상체는 아래로 — 부위 간 틸트 간격 확대
+            aim_bias_norm={"head": args.body_head_bias / fov_v,
+                           "upper": -args.body_upper_bias / fov_v})
+        gate = MotionGate(args.body_exit_deg, args.body_exit_window,
                           args.body_still_s, args.body_still_deg)
         tracker.reset()  # 이전 세션의 스무딩 잔재 제거
         phase = "patrol"
@@ -207,7 +223,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     for ev in scenario.events:
                         print(f"\n[E2E] {ev}")
                     fan.set_speed(patrol_wind_level(scenario, levels))
-                    if gate.update_patrol(chest["visible"], chest_err):
+                    if gate.update_patrol(t0, cur_pan, scenario.state == "patrol"):
                         phase = "fallback"
                         gate.reset_fallback()
                         service.report_effective(0x02)
@@ -221,7 +237,9 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                                              args.tilt_min, args.tilt_max)
                     else:
                         pan_t, tilt_t = last_pan, last_tilt  # 미관측 — 조준 유지
-                    fan.set_speed(levels["upper"])  # 가슴 조준 ≈ 상체 세기
+                    # 유효 모드가 추적(0x02)이므로 풍속도 추적 모드와 동일한
+                    # 공용 세기(앱 타겟 화면 표시값)를 쓴다 — 리모컨 주체 일관.
+                    fan.set_speed(service.common_level)
                     if gate.update_fallback(t0, cur_pan, chest["visible"]):
                         phase = "patrol"
                         gate.reset_patrol()
@@ -245,7 +263,8 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     tag = scenario.state if phase == "patrol" else "fallback"
                     print(f"\r[{time.strftime('%H:%M:%S')}] body:{tag:<8} "
                           f"rg={scenario.active_region():<5} pan={cur_pan:+7.2f}° "
-                          f"tilt={cur_tilt:+6.2f}° wind={fan_level_txt(levels, scenario, phase)} "
+                          f"tilt={cur_tilt:+6.2f}° "
+                          f"wind={fan_level_txt(levels, scenario, phase, service.common_level)} "
                           f"fps={fps:4.1f}  ", end="", flush=True)
                     last_log = time.time()
                 if web_state:
@@ -266,9 +285,9 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
     return _run
 
 
-def fan_level_txt(levels, scenario, phase) -> str:
+def fan_level_txt(levels, scenario, phase, common_level) -> str:
     """상태 로그용 — 지금 릴레이에 적용 중인 세기 표기."""
-    lv = levels["upper"] if phase == "fallback" else patrol_wind_level(scenario, levels)
+    lv = common_level if phase == "fallback" else patrol_wind_level(scenario, levels)
     return f"{lv}단" if lv else "정지"
 
 
@@ -367,6 +386,11 @@ class EswFanServiceV3(Service):
     def body_levels(self) -> dict:
         """부위별 저장 세기 — 부위 러너가 매 프레임 읽는다 (int 읽기 원자적)."""
         return self._body_levels
+
+    @property
+    def common_level(self) -> int:
+        """공용 세기 — 부위 러너의 추적 폴백이 읽는다 (추적 모드와 동일 풍속)."""
+        return self._level
 
     def _set_effective(self, mode: int) -> None:
         if mode == self._effective_mode:
@@ -492,13 +516,26 @@ def main() -> None:
     p.add_argument("--body-dwell", type=float, default=2.0,
                    help="부위 순찰 체류 시간 (s)")
     p.add_argument("--body-exit-deg", type=float, default=12.0,
-                   help="순찰 중 이동 판정 가슴 수평 오차 (° — 추적 폴백 전환)")
-    p.add_argument("--body-exit-frames", type=int, default=5,
-                   help="이동 판정 연속 프레임")
+                   help="순찰 중 이동 판정 팬 이동량 (° — 추적 폴백 전환)")
+    p.add_argument("--body-exit-window", type=float, default=3.0,
+                   help="이동 판정 시간창 (s)")
     p.add_argument("--body-still-s", type=float, default=5.0,
                    help="폴백 중 순찰 재진입 정지 시간 (s)")
     p.add_argument("--body-still-deg", type=float, default=3.0,
                    help="정지 판정 팬 각 범위 (°)")
+    p.add_argument("--body-head-bias", type=float, default=4.0,
+                   help="머리 조준 상향 편향 (° — 부위 간 틸트 간격 확대)")
+    p.add_argument("--body-upper-bias", type=float, default=2.0,
+                   help="상체 조준 하향 편향 (° — 머리/상체 구분 확대)")
+    # 스캔 단축 (fulltrack 기본 1.5°/4프레임/50프레임/2.0°가 실기에서 느림)
+    p.add_argument("--body-converge", type=float, default=2.5,
+                   help="스캔 수렴 판정 오차 (°)")
+    p.add_argument("--body-converge-frames", type=int, default=3,
+                   help="스캔 수렴 판정 연속 프레임")
+    p.add_argument("--body-occl-frames", type=int, default=30,
+                   help="부위 미검출 포기 프레임 (추정 기록 후 진행)")
+    p.add_argument("--body-blind-deg", type=float, default=4.0,
+                   help="미관측 부위 블라인드 스윕 이동량 (화면각 °/프레임)")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
@@ -539,9 +576,13 @@ def main() -> None:
     if args.rotate_speed <= 0:
         print("[ERROR] --rotate-speed는 0보다 커야 합니다")
         sys.exit(1)
-    if (args.body_dwell <= 0 or args.body_exit_deg <= 0 or args.body_exit_frames < 1
-            or args.body_still_s <= 0 or args.body_still_deg <= 0):
-        print("[ERROR] --body-* 인자는 모두 양수여야 합니다")
+    if (args.body_dwell <= 0 or args.body_exit_deg <= 0 or args.body_exit_window <= 0
+            or args.body_still_s <= 0 or args.body_still_deg <= 0
+            or args.body_head_bias < 0 or args.body_upper_bias < 0
+            or args.body_converge <= 0
+            or args.body_converge_frames < 1 or args.body_occl_frames < 1
+            or args.body_blind_deg <= 0):
+        print("[ERROR] --body-* 인자 범위가 잘못됐습니다 (help 참고)")
         sys.exit(1)
 
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)

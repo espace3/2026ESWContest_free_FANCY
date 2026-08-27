@@ -71,7 +71,6 @@ def main() -> None:
                    help="조준 부위 (기본 chest=어깨 중점, 나머지는 부위 중심 — 스캔 예행)")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--wide", action="store_true", help="Camera Module 3 Wide 렌즈 화각 사용")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
@@ -93,7 +92,7 @@ def main() -> None:
         print("[ERROR] --tilt-min은 --tilt-max보다 작아야 합니다")
         sys.exit(1)
 
-    fov_v = CFG["fov_wide" if args.wide else "fov"]["v"]
+    fov_v = CFG["fov"]["v"]
     sign = -1.0 if args.invert else 1.0
     aim_key = "upper" if args.region == "chest" else args.region
 

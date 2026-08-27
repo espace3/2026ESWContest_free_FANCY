@@ -131,7 +131,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
         # 다음 세션이 바로 재오픈해도 커널/libcamera가 자원을 다 놓을 시간을 준다.
         time.sleep(0.3)
 
-    fov_cfg = CFG["fov_wide" if args.wide else "fov"]
+    fov_cfg = CFG["fov"]
 
     if axis == "pan":
         fov_h = fov_cfg["h"]
@@ -368,7 +368,6 @@ def main() -> None:
                    help="--axis tilt 전용 조준 부위")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--wide", action="store_true", help="Camera Module 3 Wide 렌즈 화각 사용")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")

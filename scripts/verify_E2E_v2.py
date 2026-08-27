@@ -382,7 +382,6 @@ def main() -> None:
                    help="회전 모드 스윕 속도 (°/s)")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--wide", action="store_true", help="Camera Module 3 Wide 렌즈 화각 사용")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")

@@ -74,7 +74,6 @@ def main() -> None:
     p.add_argument("--invert-tilt", action="store_true", help="틸트 오차 부호 반전 (dir 확정됨, 안전용)")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--wide", action="store_true", help="Camera Module 3 Wide 렌즈 화각 사용")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
@@ -96,7 +95,7 @@ def main() -> None:
         print("[ERROR] 리밋 범위가 비어 있습니다 (min < max 필요)")
         sys.exit(1)
 
-    _fov = CFG["fov_wide" if args.wide else "fov"]
+    _fov = CFG["fov"]
     fov_h, fov_v = _fov["h"], _fov["v"]
     sign_pan = -1.0 if args.invert else 1.0
     sign_tilt = -1.0 if args.invert_tilt else 1.0

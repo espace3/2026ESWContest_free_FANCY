@@ -85,7 +85,6 @@ def main() -> None:
                    help="오차 부호 반전 (dir_for_positive/FOV 부호 실기 검증용, TODO.md)")
     # ── 카메라 백엔드 (verify_movenet과 동일) ─────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--wide", action="store_true", help="Camera Module 3 Wide 렌즈 화각 사용")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
@@ -105,7 +104,7 @@ def main() -> None:
         print(f"[ERROR] 모델 없음: {args.model}")
         sys.exit(1)
 
-    fov_h = CFG["fov_wide" if args.wide else "fov"]["h"]
+    fov_h = CFG["fov"]["h"]
     sign = -1.0 if args.invert else 1.0
 
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)

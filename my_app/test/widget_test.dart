@@ -4,11 +4,19 @@ import 'package:my_app/app.dart';
 import 'package:my_app/pages/basic_mode_page.dart';
 import 'package:my_app/pages/target_mode_page.dart';
 import 'package:my_app/services/ble/ble_connection_service.dart';
+import 'package:my_app/services/ble/ble_protocol.dart' as proto;
+import 'package:my_app/services/fan_state_service.dart';
 
 void main() {
   // 전원 버튼은 BLE 연결 전까지 비활성화되므로, 테스트에서는 실제 BLE 없이
   // "연결됨" 상태를 흉내낸다.
   BleConnectionService.instance.debugMarkConnected();
+
+  // FanStateService는 싱글턴이라 테스트 간 상태가 새지 않게 매번 초기화한다.
+  setUp(() {
+    FanStateService.instance.debugReset();
+    BleConnectionService.instance.debugWrites.clear();
+  });
 
   Future<void> turnOn(WidgetTester tester) async {
     await tester.pumpWidget(const EswFanApp());
@@ -69,6 +77,40 @@ void main() {
       expect(selector.onSelectionChanged, isNotNull);
     }
     expect(find.text('부위별 세기가 적용됩니다'), findsOneWidget);
+  });
+
+  testWidgets('전원 ON과 모드 전환 시 표시값을 재전송한다 (리모컨 주체)', (tester) async {
+    final writes = BleConnectionService.instance.debugWrites;
+    await turnOn(tester);
+
+    // 전원 ON: power → mode(기본-고정) → 표시 세기 재전송 (ble_protocol.md 3.3).
+    expect(writes, [
+      [proto.charNoPower, 0x01],
+      [proto.charNoMode, 0x00],
+      [proto.charNoWind, 0x00, 0x00],
+    ]);
+
+    writes.clear();
+    await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+    await tester.pumpAndSettle();
+
+    // 타겟 모드 전환: mode(0x02) + 타겟 화면의 표시 세기 재전송.
+    expect(writes, [
+      [proto.charNoMode, 0x02],
+      [proto.charNoWind, 0x00, 0x00],
+    ]);
+
+    writes.clear();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    // 부위 모드 진입: mode(0x03) + 부위별 세기 3건 (상체 기본 1단).
+    expect(writes, [
+      [proto.charNoMode, 0x03],
+      [proto.charNoWind, 0x01, 0x00],
+      [proto.charNoWind, 0x02, 0x01],
+      [proto.charNoWind, 0x03, 0x00],
+    ]);
   });
 
   testWidgets('풍량 선택기에 정지 상태가 표시된다', (tester) async {

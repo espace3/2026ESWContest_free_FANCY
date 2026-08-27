@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/ble/ble_connection_service.dart';
+import '../services/fan_state_service.dart';
 import 'basic_mode_page.dart';
 import 'ble_scan_page.dart';
 import 'target_mode_page.dart';
@@ -11,6 +12,9 @@ import 'target_mode_page.dart';
 /// - 전원 ON: 전원 버튼이 좌상단으로 이동·축소되고, 같은 버튼으로 전원을 끈다.
 ///   본문에는 기본 모드 ↔ 타겟 모드 화면이 표시되며 좌우 스와이프
 ///   또는 하단 인디케이터 클릭으로 전환한다.
+///
+/// 전원/페이지 상태는 [FanStateService]가 소유한다 (리모컨 주체 + 재연결
+/// 복원을 위해 위젯 밖에 있어야 함) — 이 위젯은 표시와 입력 전달만 한다.
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -26,15 +30,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   final _pageController = PageController();
   final _ble = BleConnectionService.instance;
-  bool _powerOn = false;
+  final _fan = FanStateService.instance;
   bool _wasConnected = false;
-  int _currentPage = 0;
 
   @override
   void initState() {
     super.initState();
     _wasConnected = _ble.isConnected;
     _ble.addListener(_onConnectionChanged);
+    _fan.addListener(_onFanChanged);
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -42,6 +46,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ble.removeListener(_onConnectionChanged);
+    _fan.removeListener(_onFanChanged);
     _pageController.dispose();
     super.dispose();
   }
@@ -56,7 +61,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // 화면 간 이동(스캔↔홈)은 lifecycle 이벤트가 아니라 영향 없다.
     if ((state == AppLifecycleState.paused ||
             state == AppLifecycleState.detached) &&
-        !_powerOn) {
+        !_fan.powerOn) {
       _ble.disconnect();
     }
   }
@@ -70,40 +75,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         SnackBar(content: Text(connected ? 'BLE 연결 완료' : 'BLE 연결이 해제되었습니다')),
       );
     }
-    setState(() {
-      // 연결이 끊기면 전원 OFF 초기 화면으로 복귀 (전원 버튼도 비활성화되므로).
-      if (!connected && _powerOn) {
-        _powerOn = false;
-        _currentPage = 0;
-      }
+    // 끊김 시 전원 OFF 복귀는 FanStateService가 처리 — _onFanChanged로 반영됨.
+    setState(() {});
+  }
+
+  void _onFanChanged() {
+    if (!mounted) return;
+    setState(() {});
+    // 재연결 복원 등 외부에서 페이지가 바뀐 경우 PageView를 따라가게 한다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageController.hasClients) return;
+      final visible = _pageController.page?.round() ?? 0;
+      if (visible != _fan.page) _pageController.jumpToPage(_fan.page);
     });
   }
 
   Future<void> _togglePower() async {
-    final next = !_powerOn;
-    // 전송이 실제로 성공했을 때만 화면 상태를 바꾼다 — 실패를 조용히 넘기면
-    // "화면은 켜졌는데 선풍기는 꺼져 있는" 불일치가 생긴다.
-    final ok = !_ble.isConnected && _allowOfflinePreview
-        ? true
-        : await _ble.writePower(next);
-    if (!mounted) return;
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('전원 명령 전송 실패 — BLE 연결을 확인하세요')),
-      );
+    final next = !_fan.powerOn;
+    if (!_ble.isConnected && _allowOfflinePreview) {
+      _fan.setPowerLocal(next);
       return;
     }
-    setState(() {
-      _powerOn = next;
-      _currentPage = 0;
-    });
+    // 전송이 실제로 성공했을 때만 상태가 바뀐다(FanStateService) — 실패를
+    // 조용히 넘기면 "화면은 켜졌는데 선풍기는 꺼져 있는" 불일치가 생긴다.
+    final ok = await _fan.setPower(next);
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('전원 명령 전송 실패 — BLE 연결을 확인하세요')),
+    );
   }
 
   /// 스와이프든 상단 토글이든, 페이지가 실제로 바뀌면 여기로 모여
-  /// 기본/타겟 모드 write를 보낸다 (세부 하위 상태는 각 페이지 자체 토글이 담당).
+  /// 기본/타겟 모드 write + 표시 세기 재전송이 나간다 (FanStateService).
   void _onPageChanged(int index) {
-    setState(() => _currentPage = index);
-    _ble.writeMode(index == 0 ? 0x00 : 0x02);
+    _fan.setPage(index);
   }
 
   void _goToPage(int index) {
@@ -119,18 +124,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return AnimatedAlign(
       duration: _switchDuration,
       curve: Curves.easeInOutCubic,
-      alignment: _powerOn ? Alignment.topLeft : Alignment.center,
+      alignment: _fan.powerOn ? Alignment.topLeft : Alignment.center,
       child: Padding(
         // 좌상단에 붙었을 때 창 모서리와의 여백 (스케일 영향을 받지 않도록 바깥에 둠).
         padding: const EdgeInsets.all(12),
         child: AnimatedScale(
           duration: _switchDuration,
           curve: Curves.easeInOutCubic,
-          scale: _powerOn ? 0.3 : 1,
+          scale: _fan.powerOn ? 0.3 : 1,
           alignment: Alignment.topLeft,
           child: IconButton.filled(
             tooltip: _ble.isConnected
-                ? (_powerOn ? '전원 끄기' : '전원 켜기')
+                ? (_fan.powerOn ? '전원 끄기' : '전원 켜기')
                 : (_allowOfflinePreview ? '오프라인 미리보기' : 'BLE 연결 필요'),
             onPressed: _ble.isConnected || _allowOfflinePreview
                 ? _togglePower
@@ -191,7 +196,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 for (var i = 0; i < _modeNames.length; i++)
                   ButtonSegment(value: i, label: Text(_modeNames[i])),
               ],
-              selected: {_currentPage},
+              selected: {_fan.page},
               onSelectionChanged: (selection) => _goToPage(selection.first),
             ),
           ),
@@ -219,10 +224,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     padding: const EdgeInsets.all(8),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
-                      width: _currentPage == i ? 24 : 8,
+                      width: _fan.page == i ? 24 : 8,
                       height: 8,
                       decoration: BoxDecoration(
-                        color: _currentPage == i
+                        color: _fan.page == i
                             ? Theme.of(context).colorScheme.primary
                             : Theme.of(context).colorScheme.outlineVariant,
                         borderRadius: BorderRadius.circular(4),
@@ -248,7 +253,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             Positioned.fill(
               child: AnimatedSwitcher(
                 duration: _switchDuration,
-                child: _powerOn
+                child: _fan.powerOn
                     ? _buildOnContent(context)
                     : _buildOffContent(context),
               ),

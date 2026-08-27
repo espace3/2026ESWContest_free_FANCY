@@ -40,10 +40,13 @@ verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레
          게이트(--body-exit-deg)보다 둔하게 둔다 — recenter가 먼저 걸리면 게이트
          창이 비워져(비 patrol) 폴백이 안 나오고, 작은 흔들림에도 순찰이 자주
          끊긴다 (실기 2026-08-27). 미세 흔들림은 --body-deadzone으로 억제한다.
-       조준 편향(--body-head-bias/--body-upper-bias): 부위 간 틸트 간격이
-         실기에서 작아(거리 2m에 머리↔상체 ~10° + 틸트 리밋 ±15°) 머리는
-         위로, 상체는 아래로 관측 좌표를 편향해 간격을 벌린다
-         (control/body_wind.py aim_bias_norm 참고).
+       조준각 벌리기: 부위 간 틸트 간격이 실기에서 작아(거리 2m에 머리↔상체
+         ~10° + 틸트 리밋 ±15°) 두 장치를 쓴다 —
+         --body-head-bias/--body-upper-bias는 조준점을 옮기고(관측 쪽),
+         --body-tilt-spread는 부위별 틸트 구간을 어긋나게 잘라(출력 쪽)
+         아래쪽 리밋을 하체 전용으로 남긴다. 후자가 없으면 상체가 리밋에
+         눌릴 때 하체도 같은 각도가 되어 순찰이 멈춘 것처럼 보인다
+         (control/body_wind.py aim_bias_norm / _spread_clamp 참고).
      러너 교체가 아니라 내부 상 전환이라 카메라 세션이 안 끊기고, 전환마다
      유효 모드 push [0x03, 모드]가 나간다. 폴백 중 가슴을 잃으면 마지막 조준을
      유지한다(재탐색 스윕은 순찰 상의 search 몫 — 알려진 한계).
@@ -85,7 +88,7 @@ from bluez_peripheral.gatt import CharacteristicFlags as CharFlags
 from bluez_peripheral.gatt import Service, characteristic
 
 from config import CFG
-from control.body_wind import BodyPatrolScenario, MotionGate, patrol_wind_level
+from control.body_wind import BodyPatrolScenario, MotionGate, body_wind_level
 from control.control_signal_generator import (apply_deadzone, clamp_angle,
                                               compute_pan_angle,
                                               compute_tilt_angle)
@@ -165,7 +168,8 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             rescan_thr_deg=args.body_rescan_thr,
             # 조준 편향: 머리는 위로, 상체는 아래로 — 부위 간 틸트 간격 확대
             aim_bias_norm={"head": args.body_head_bias / fov_v,
-                           "upper": -args.body_upper_bias / fov_v})
+                           "upper": -args.body_upper_bias / fov_v},
+            tilt_spread_deg=args.body_tilt_spread)
         gate = MotionGate(args.body_exit_deg, args.body_exit_window,
                           args.body_still_s, args.body_still_deg)
         tracker.reset()  # 이전 세션의 스무딩 잔재 제거
@@ -177,7 +181,11 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         fps_hist: list[float] = []
         t_prev = time.time()
         last_log = 0.0
-        print("[E2E] 부위 순찰 세션 시작 (전신 스캔부터)")
+        spread = " ".join(
+            f"{r}[{scenario._spread_clamp(r, args.tilt_min):+.0f},"
+            f"{scenario._spread_clamp(r, args.tilt_max):+.0f}]"
+            for r in ("head", "upper", "lower"))
+        print(f"[E2E] 부위 순찰 세션 시작 (전신 스캔부터) — 틸트 구간 {spread}")
         try:
             while not stop_event.is_set():
                 t0 = time.time()
@@ -231,8 +239,8 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     })
                     for ev in scenario.events:
                         print(f"\n[E2E] {ev}")
-                    fan.set_speed(patrol_wind_level(scenario, levels,
-                                                    service.common_level))
+                    fan.set_speed(body_wind_level(scenario, levels,
+                                                  service.common_level))
                     if gate.update_patrol(t0, cur_pan, scenario.state == "patrol"):
                         phase = "fallback"
                         gate.reset_fallback()
@@ -300,7 +308,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
 def fan_level_txt(levels, scenario, phase, common_level) -> str:
     """상태 로그용 — 지금 릴레이에 적용 중인 세기 표기."""
     lv = (common_level if phase == "fallback"
-          else patrol_wind_level(scenario, levels, common_level))
+          else body_wind_level(scenario, levels, common_level))
     return f"{lv}단" if lv else "정지"
 
 
@@ -536,10 +544,13 @@ def main() -> None:
                    help="폴백 중 순찰 재진입 정지 시간 (s)")
     p.add_argument("--body-still-deg", type=float, default=3.0,
                    help="정지 판정 팬 각 범위 (°)")
-    p.add_argument("--body-head-bias", type=float, default=6.0,
+    p.add_argument("--body-head-bias", type=float, default=11.0,
                    help="머리 조준 상향 편향 (° — 부위 간 틸트 간격 확대)")
-    p.add_argument("--body-upper-bias", type=float, default=1.0,
+    p.add_argument("--body-upper-bias", type=float, default=0.5,
                    help="상체 조준 하향 편향 (° — 머리/상체 구분 확대)")
+    p.add_argument("--body-tilt-spread", type=float, default=3.0,
+                   help="부위별 틸트 구간 분리 폭 (° — 아래쪽 리밋은 하체 전용, "
+                        "상체는 그보다 이만큼 위에서 멈춘다. 0이면 분리 없음)")
     # 미세 움직임 둔감화 (실기 2026-08-27: 작은 흔들림에 순찰이 자주 끊김).
     # 시나리오 자체 이동 감지는 게이트(--body-exit-deg)보다 위에 둬야 게이트가
     # 1차 판정자가 된다 — 낮으면 recenter가 먼저 걸려 폴백이 안 나온다.
@@ -603,6 +614,7 @@ def main() -> None:
     if (args.body_dwell <= 0 or args.body_exit_deg <= 0 or args.body_exit_window <= 0
             or args.body_still_s <= 0 or args.body_still_deg <= 0
             or args.body_head_bias < 0 or args.body_upper_bias < 0
+            or args.body_tilt_spread < 0
             or args.body_move_thr <= 0 or args.body_rescan_thr <= 0
             or args.body_deadzone <= 0 or args.body_deadzone_tilt <= 0
             or args.body_converge <= 0

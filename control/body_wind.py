@@ -86,8 +86,15 @@ class BodyPatrolScenario(FullBodyScenario):
         self.aim_bias_norm = aim_bias_norm or {}
 
     def _route(self):
-        return [r for r in self.PATROL_ORDER
-                if r in self.waypoints and r in self.allowed]
+        route = [r for r in self.PATROL_ORDER
+                 if r in self.waypoints and r in self.allowed]
+        if route:
+            return route
+        # 세기가 전부 0이면(사용자가 바람만 끈 상태) 경로가 빈다. 그대로 두면
+        # 부모의 patrol이 "웨이포인트 없음 → 스캔 재시작"을 매 프레임 반복해
+        # 스캔↔순찰 루프에 빠지므로, allowed를 무시하고 조준만 이어간다 —
+        # 풍속은 body_wind_level이 각 부위 세기(0)를 그대로 읽어 정지가 된다.
+        return [r for r in self.PATROL_ORDER if r in self.waypoints]
 
     # 부위 순서 (틸트 값 오름차순 = 화면 위→아래). _spread_clamp가 쓴다.
     _SPREAD_ORDER = {"head": 0, "upper": 1, "lower": 2}

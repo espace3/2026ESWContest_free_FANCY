@@ -20,8 +20,9 @@ verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레
        에코 없음 — 앱이 타임아웃으로 감지한다. 유효 모드 push(0x03)와 객체
        인식 Status(0x02)는 부위 러너 단계(다음)에서 송신 시작 — 요청/유효
        모드가 갈라지는 첫 지점이 그때라서.
-  3. 풍량 [0x02(상체), 0x00] 거부 — 상체는 1~3단만 (부위 순찰 경로가 비지
-     않게 하는 보장). 부위별 세기 기본값도 상체만 1단.
+  3. 풍량 세기 0(정지)은 공용·부위 어느 대상에도 허용한다. 부위 세 개가 모두
+     0이어도 유효한 설정이며(사용자가 바람만 끈 상태), 그때 부위 러너는 조준을
+     계속하되 릴레이를 돌리지 않는다 — control/body_wind.py _route 참고.
   4. 유효 모드(_effective_mode) 도입 — 요청 모드(앱이 write한 값)와 별개로
      RPi가 실제로 돌리는 모드. 부위 러너의 추적 폴백 중에만 갈라진다(아래 5).
   5. 부위 모드(0x03) 실동작 — 단일 세션 러너(_make_body_runner)가 내부 2상으로
@@ -405,7 +406,8 @@ class EswFanServiceV3(Service):
         self._mode = 0x00
         self._effective_mode = 0x00
         self._level = 0                                  # 마지막 수신 공용 세기
-        self._body_levels = {0x01: 0, 0x02: 1, 0x03: 0}  # 부위 러너용 — 상체 ≥1
+        # 부위별 세기 (부위 러너용). 앱이 부위 모드 진입 시 자기 값으로 덮어쓴다.
+        self._body_levels = {0x01: 0, 0x02: 1, 0x03: 0}
 
     # ── 상태 적용/통지 ───────────────────────────────────────────────────────
 
@@ -523,9 +525,6 @@ class EswFanServiceV3(Service):
     def wind(self, value, options):
         if len(value) != 2 or value[0] not in WIND_TARGETS or not 0 <= value[1] <= 3:
             print(f"[RX] 풍량: 잘못된 값 ({_hex(value)}) — 거부, 에코 없음")
-            return
-        if value[0] == 0x02 and value[1] == 0x00:
-            print("[RX] 풍량: 상체는 정지 불가 (1~3단만) — 거부, 에코 없음")
             return
         target, level = value[0], value[1]
         if target == 0x00:

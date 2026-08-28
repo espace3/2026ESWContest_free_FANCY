@@ -165,20 +165,33 @@ class BodyPatrolScenario(FullBodyScenario):
             self._enter_patrol()
             return pan_t, tilt_t
 
-        # 4) 타임아웃 — 하체는 비율 추정, 아무것도 없으면 가슴을 상체로 삼아
-        #    진행한다(사람은 잡혔는데 부위 신뢰도가 낮은 경우의 정체 차단).
-        if obs["t"] - self._map_since >= self.map_timeout_s:
-            if "lower" in need and "lower" not in self.waypoints:
-                est = self._est_lower_tilt()
-                if est is not None:
-                    self.waypoints["lower"] = {"tilt": est, "estimated": True}
-            if not self.waypoints and chest["visible"]:
-                self.waypoints["upper"] = {"tilt": self._tilt_of(chest, cur_tilt),
-                                           "estimated": True}
-                self.events.append("[map] 부위 미검출 — 가슴을 상체로 대체")
+        # 4) 타임아웃 — 필요한데 못 본 부위를 추정으로 채우고 진행한다.
+        #    비우고 넘어가면 그 부위가 순찰 경로에서 빠져 "다음 부위로 안 넘어감"
+        #    으로 보인다(진단 S4). 보이는 순간 _remap_others가 실제 값으로 고친다.
+        if (obs["t"] - self._map_since >= self.map_timeout_s
+                and obs["target_idx"] is not None):
+            for region in sorted(need - self.waypoints.keys()):
+                self.waypoints[region] = {
+                    "tilt": self._ct(self._fallback_tilt(region, chest, cur_tilt)),
+                    "estimated": True}
+                self.events.append(f"[map] {region} 미검출 — 추정 조준")
             if self.waypoints:
                 self._enter_patrol()
         return pan_t, tilt_t
+
+    def _fallback_tilt(self, region: str, chest: dict, cur_tilt: float) -> float:
+        """관측 못 한 부위의 임시 조준각 (매핑 타임아웃 시)."""
+        if region == "upper" and chest["visible"]:
+            return self._tilt_of(chest, cur_tilt)   # 가슴 ≈ 상체
+        if region == "lower":
+            est = self._est_lower_tilt()
+            head = self.waypoints.get("head")
+            # 머리가 리밋에 눌렸으면 머리↔상체 간격이 가짜라 비율 추정도 무의미
+            # 하다 (verify_fulltrack 알려진 문제 1). 그럴 땐 아래 끝을 겨눈다.
+            if est is not None and not (head and head["tilt"] <= self.tilt_min + 1e-6):
+                return est
+        # 부위가 있을 법한 극단 — 머리는 위, 나머지는 아래.
+        return self.tilt_min if region == "head" else self.tilt_max
 
     def _remap_others(self, obs: dict, cur_tilt: float, aimed: str) -> None:
         """순찰 중, 조준 중이 아닌 부위의 웨이포인트를 보이는 대로 갱신한다.
@@ -199,6 +212,31 @@ class BodyPatrolScenario(FullBodyScenario):
                 wp["tilt"] += self.remap_alpha * (tilt - wp["tilt"])
                 wp["estimated"] = False
 
+    def _normalize_waypoints(self) -> None:
+        """웨이포인트를 '실제로 겨눌 수 있는 각도'로 유지한다.
+
+        부모의 순찰은 다음 부위로 넘어가기 전에 `|현재 틸트 − 웨이포인트| ≤
+        converge_deg`(도착 판정)를 요구한다. 그런데 _spread_clamp는 **명령만**
+        자르므로, 웨이포인트가 그 구간 밖이면 모터가 도착할 수 없어 체류가
+        시작조차 안 되고 그 부위에 영원히 머문다 (진단 S5 — 근접 시 상체가
+        리밋에 눌리면 재현). 그래서 기록 주체(매핑·재매핑·부모의 EMA 보정)와
+        무관하게 매 스텝 한 번 구간 안으로 normalize한다.
+
+        더불어 순서(머리 ≤ 상체 ≤ 하체)가 뒤집히면 **추정 웨이포인트만** 밀어
+        바로잡는다 — 실관측은 건드리지 않는다(관측이 진실).
+        """
+        g = self.tilt_spread_deg
+        for region, wp in self.waypoints.items():
+            wp["tilt"] = self._spread_clamp(region, self._ct(wp["tilt"]))
+        upper = self.waypoints.get("upper")
+        if not upper:
+            return
+        head, lower = self.waypoints.get("head"), self.waypoints.get("lower")
+        if head and head["estimated"] and head["tilt"] > upper["tilt"] - g:
+            head["tilt"] = self._spread_clamp("head", upper["tilt"] - g)
+        if lower and lower["estimated"] and lower["tilt"] < upper["tilt"] + g:
+            lower["tilt"] = self._spread_clamp("lower", upper["tilt"] + g)
+
     def step(self, obs: dict):
         biased = {r: b for r, b in self.aim_bias_norm.items()
                   if b and obs["regions"].get(r, {}).get("visible")}
@@ -216,6 +254,7 @@ class BodyPatrolScenario(FullBodyScenario):
         if self.state == "patrol":
             # 제외 대상은 step 이후의 조준 부위 — 다음 프레임 도착 판정의 기준.
             self._remap_others(obs, obs["pos"][1], self.active_region())
+        self._normalize_waypoints()
         return pan_t, self._spread_clamp(region, tilt_t)
 
 

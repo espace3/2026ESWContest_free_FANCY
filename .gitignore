@@ -13,3 +13,4 @@ fulltrack_state.json
 motor_state.json
 motor_state.json.tmp
 docs/
+scripts/sim_body_patrol.py

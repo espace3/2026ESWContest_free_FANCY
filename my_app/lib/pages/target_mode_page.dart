@@ -6,6 +6,10 @@ import '../widgets/wind_strength_selector.dart';
 /// 부위 이름 → 풍량 Characteristic의 "대상" 바이트 (ble_protocol.md 3.3).
 const _bodyPartTargetByte = {'머리': 0x01, '상체': 0x02, '하체': 0x03};
 
+/// 이동 감지 표시색 — 정상(추적 중)도 오류도 아닌 "잠시 다른 동작 중"이라
+/// 테마의 primary/error 대신 주의를 뜻하는 노란색을 쓴다.
+const _movingAmber = Color(0xFFB26A00);
+
 /// 객체 추적(타겟) 모드 화면.
 ///
 /// 제안서 3-2 / 4: 객체 인식 성공 여부(Status) 표시, 풍량 선택,
@@ -23,8 +27,13 @@ class TargetModePage extends StatelessWidget {
 
   /// 인식 상태 카드 — recognized가 null이면 "아직 보고 없음"이다
   /// (연결 직후나 추적이 돌기 전). 미인식(false)과 구분해서 보여준다.
+  ///
+  /// 이동 감지(부위 모드인데 RPi 유효 모드가 추적)는 별도 블록이 아니라 이
+  /// 카드에 "인식 중 — 이동 감지"처럼 덧붙이고 노란색으로 표시한다 — 상태가
+  /// 한 줄에 모여 읽기 쉽고, 카드가 늘었다 줄었다 하지 않는다.
   Widget _buildStatusCard(BuildContext context, FanStateService fan) {
     final colors = Theme.of(context).colorScheme;
+    final moving = fan.bodyMode && fan.effectiveMode == 0x02;
     final (icon, title, subtitle, color) = switch (fan.recognized) {
       true => (
           Icons.person,
@@ -46,11 +55,17 @@ class TargetModePage extends StatelessWidget {
         ),
     };
     return Card(
-      color: fan.recognized == true ? colors.primaryContainer : null,
+      color: moving
+          ? _movingAmber.withAlpha(0x33)
+          : (fan.recognized == true ? colors.primaryContainer : null),
       child: ListTile(
-        leading: Icon(icon, color: color),
-        title: Text(title),
-        subtitle: Text(subtitle),
+        leading: Icon(moving ? Icons.directions_walk : icon,
+            color: moving ? _movingAmber : color),
+        title: Text(
+          moving ? '$title — 이동 감지' : title,
+          style: moving ? TextStyle(color: _movingAmber) : null,
+        ),
+        subtitle: Text(moving ? '잠시 멈추면 부위별 바람으로 돌아갑니다' : subtitle),
       ),
     );
   }
@@ -67,19 +82,6 @@ class TargetModePage extends StatelessWidget {
           Text('객체 인식 상태', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           _buildStatusCard(context, fan),
-          // 부위 모드인데 RPi가 추적으로 내려가 있는 동안만 표시.
-          if (fan.bodyMode && fan.effectiveMode == 0x02) ...[
-            const SizedBox(height: 8),
-            Card(
-              color: colors.secondaryContainer,
-              child: ListTile(
-                leading: Icon(Icons.directions_walk,
-                    color: colors.onSecondaryContainer),
-                title: const Text('이동 감지 — 추적 중'),
-                subtitle: const Text('잠시 멈추면 부위별 바람으로 돌아갑니다'),
-              ),
-            ),
-          ],
           const SizedBox(height: 24),
           Row(
             crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -134,9 +136,6 @@ class TargetModePage extends StatelessWidget {
                   Expanded(
                     child: WindStrengthSelector(
                       value: fan.bodyStrength(entry.value),
-                      // 상체는 정지 불가 (ble_protocol.md 3.3)
-                      disabledLevels:
-                          entry.value == 0x02 ? const {0} : const {},
                       onChanged: fan.bodyMode
                           ? (value) => fan.setBodyStrength(entry.value, value)
                           : null,

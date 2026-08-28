@@ -158,23 +158,39 @@ void main() {
     expect(find.text('대상 없음'), findsOneWidget);
   });
 
-  testWidgets('부위 모드 중 유효 모드가 추적이면 이동 감지 배너가 뜬다', (tester) async {
+  testWidgets('부위 모드 중 유효 모드가 추적이면 인식 카드에 이동 감지가 붙는다', (tester) async {
     await goToTarget(tester);
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
-    expect(find.text('이동 감지 — 추적 중'), findsNothing);
+    FanStateService.instance
+        .debugStatusNotify([proto.statusTypeRecognition, 0x01]);
+    await tester.pump();
+    expect(find.text('인식 중'), findsOneWidget);
 
     // RPi가 이동을 감지해 추적으로 내려감 (유효 모드 push 0x03).
     FanStateService.instance
         .debugStatusNotify([proto.statusTypeEffectiveMode, 0x02]);
     await tester.pump();
-    expect(find.text('이동 감지 — 추적 중'), findsOneWidget);
+    expect(find.text('인식 중 — 이동 감지'), findsOneWidget);
 
-    // 다시 정지해 순찰로 복귀하면 배너가 사라진다.
+    // 다시 정지해 순찰로 복귀하면 원래 표시로 돌아온다.
     FanStateService.instance
         .debugStatusNotify([proto.statusTypeEffectiveMode, 0x03]);
     await tester.pump();
-    expect(find.text('이동 감지 — 추적 중'), findsNothing);
+    expect(find.text('인식 중'), findsOneWidget);
+  });
+
+  testWidgets('부위별 세기는 전부 정지(0)로 둘 수 있다', (tester) async {
+    await goToTarget(tester);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    // 부위 선택기(공용 다음 3개) 어디에도 비활성 단계가 없어야 한다.
+    for (final selector in targetSelectors(tester).skip(1)) {
+      for (final segment in selector.segments) {
+        expect(segment.enabled, isTrue);
+      }
+    }
   });
 
   testWidgets('풍량 선택기에 정지 상태가 표시된다', (tester) async {

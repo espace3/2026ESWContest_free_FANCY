@@ -92,7 +92,6 @@ class FanStateService extends ChangeNotifier {
       _bodyStrengths[0x01] = p.getInt('bodyHead') ?? 0;
       _bodyStrengths[0x02] = p.getInt('bodyUpper') ?? 1;
       _bodyStrengths[0x03] = p.getInt('bodyLower') ?? 0;
-      if (_bodyStrengths[0x02] == 0) _bodyStrengths[0x02] = 1; // 상체 최소 1
       notifyListeners();
     } catch (e) {
       debugPrint('설정 로드 실패 — 기본값 사용: $e');
@@ -177,8 +176,9 @@ class FanStateService extends ChangeNotifier {
     await _ble.writeWind(0x00, level);
   }
 
+  /// 부위 세기에는 제약이 없다 — 전부 정지(0)로 두는 것도 유효한 설정이다
+  /// (RPi는 그 경우 조준만 계속하고 바람을 보내지 않는다).
   Future<void> setBodyStrength(int target, int level) async {
-    if (target == 0x02 && level == 0) return; // 상체 정지 불가 (프로토콜 §3.3)
     _bodyStrengths[target] = level;
     notifyListeners();
     unawaited(_save());

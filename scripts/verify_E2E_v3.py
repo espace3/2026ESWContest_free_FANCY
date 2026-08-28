@@ -63,6 +63,14 @@ verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레
      나중에. 반대면 죽어가는 부위 러너의 마지막 프레임이 방금 적용한 릴레이
      값을 덮는 레이스가 있다. 부위 모드 중에는 서비스가 릴레이를 아예 건드리지
      않는다(러너 소유 — 러너 종료 시 finally에서 0으로 놓고 나온다).
+  8. 페어링 에이전트 등록 (NoIoAgent) — v1/v2/verify_ble.py에는 없었다.
+     에이전트가 없으면 중앙(앱)이 본딩을 시도할 때 BlueZ가 응답할 수단이 없어
+     연결이 길게 매달리다 실패한다. 본딩은 그 기기와 **처음** 연결할 때 일어나
+     "RPi나 앱을 처음 실행할 때만 간혹 실패"로 나타난다 (실기 2026-08-27).
+     그래서 _ble_main을 v2에서 가져다 쓰지 않고 v3가 직접 구성한다.
+  9. SIGHUP/SIGTERM 정리 (_exit_on_signals) — SSH가 끊기면 팬이 켜진 채
+     남던 문제. 기본 동작이 즉시 종료라 finally가 안 돌던 것을 신호를
+     KeyboardInterrupt로 바꿔 Ctrl+C와 같은 정리 경로를 타게 했다.
 
 실행 (RPi 5, 레포 루트에서):
     python3 scripts/verify_E2E_v3.py --axis pan
@@ -75,6 +83,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import math
+import signal
 import sys
 import threading
 import time
@@ -86,14 +95,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import cv2
 
+from bluez_peripheral.adapter import Adapter
+from bluez_peripheral.advert import Advertisement
 from bluez_peripheral.gatt import CharacteristicFlags as CharFlags
 from bluez_peripheral.gatt import Service, characteristic
+from bluez_peripheral.util import get_message_bus
 
 from config import CFG
 from control.body_wind import BodyPatrolScenario, MotionGate, body_wind_level
 from control.control_signal_generator import (apply_deadzone, clamp_angle,
                                               compute_pan_angle,
                                               compute_tilt_angle)
+from control.recognition_reporter import RecognitionReporter
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 from vision.target_selector import (DEFAULT_MATCH_RADIUS, person_center,
@@ -103,10 +116,10 @@ from verify_movenet import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 from verify_fulltrack import _INVISIBLE, _axes_idle, _draw_overlay, chest_point
 from verify_E2E_v1 import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
-                           STATUS_UUID, MODE_NAMES, WIND_TARGETS,
+                           STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS,
                            _hex, _make_runner, _window_viewer)
 from verify_E2E_v2 import (_DryRelay, _make_sweeper, _make_homer,
-                           _ModeSupervisor, _ble_main)
+                           _ModeSupervisor, _watch_disconnects)
 
 
 def _open_cam_retry(args):
@@ -129,6 +142,37 @@ def _open_cam_retry(args):
         _release_camera(cam, backend)
         time.sleep(1.0)
     raise RuntimeError("[E2E] 카메라를 열 수 없습니다 (재시도 소진)")
+
+
+class _ReportingDetector:
+    """추적 러너용 디텍터 래퍼 — "사람이 보이는가"를 서비스에 보고한다.
+
+    일반 타겟 모드(0x02)의 추적 루프는 tracking_core 안에 있어 콜백 자리가 없다.
+    공유 모듈(v1 _make_runner·tracking_core — verify_track_*와 공용)을 고치지 않고
+    인식 상태를 얻으려고 디텍터를 감쌌다: infer 결과를 들여다보기만 하고 그대로
+    돌려준다. 서비스는 나중에 만들어지므로(supervisor → service 순서) attach로
+    꽂는다. 보고 시점은 RecognitionReporter가 정한다(깜빡임 억제).
+    부위 러너는 선정된 대상(target_idx) 기준으로 따로 보고하므로 여기 기준
+    ("사람이 한 명이라도 검출")과 미세하게 다를 수 있다.
+    """
+
+    def __init__(self, detector) -> None:
+        self._d = detector
+        self._service = None
+        self._reporter = RecognitionReporter()
+
+    def attach(self, service) -> None:
+        self._service = service
+
+    def infer(self, frame):
+        result = self._d.infer(frame)
+        seen = self._reporter.update(time.time(), bool(result.get("people")))
+        if seen is not None and self._service is not None:
+            self._service.report_recognized(seen)
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._d, name)   # 나머지 속성/메서드는 원본에 위임
 
 
 def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_state):
@@ -180,7 +224,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         service.report_effective(0x03)
         prev_center = None
         last_pan, last_tilt = mc.current_position()
-        recognized = None
+        recognition = RecognitionReporter()   # 인식 Status 보고 시점 (깜빡임 억제)
         fps_hist: list[float] = []
         t_prev = time.time()
         last_log = 0.0
@@ -223,9 +267,9 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 smoothed = tracker.update(tracker_input)
                 fresh = {k: tracker.miss[k] == 0 for k in PoseTracker.REGIONS}
 
-                if (target_idx is not None) != recognized:
-                    recognized = target_idx is not None
-                    service.report_recognized(recognized)
+                seen = recognition.update(t0, target_idx is not None)
+                if seen is not None:
+                    service.report_recognized(seen)
 
                 cur_pan, cur_tilt = mc.current_position()
                 levels = _region_levels()
@@ -507,10 +551,63 @@ class EswFanServiceV3(Service):
         self._apply_state()
 
 
+def _exit_on_signals() -> None:
+    """SIGHUP/SIGTERM을 KeyboardInterrupt로 바꿔 종료 정리가 돌게 한다 (docstring 9).
+
+    두 신호의 기본 동작은 '프로세스 즉시 종료'라 finally도, 컨텍스트 매니저의
+    __exit__(릴레이 전부 오픈·모터 해제)도 실행되지 않는다. SSH 세션이 끊기면
+    포그라운드 프로세스가 SIGHUP을 받으므로, 팬이 켜진 채 헤드가 그 자리에
+    그대로 남는다 (실기 2026-08-27). Ctrl+C(SIGINT)만 멀쩡히 정리되던 이유다.
+    두 번째 신호는 기본 동작으로 되돌려 즉시 종료되게 한다 — 정리 도중 다시
+    신호가 와도 매달리지 않도록.
+    """
+    def _raise(signum, _frame):
+        signal.signal(signum, signal.SIG_DFL)
+        raise KeyboardInterrupt(f"signal {signum}")
+
+    for name in ("SIGHUP", "SIGTERM"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue   # Windows에는 SIGHUP이 없다 (--dry-run 개발 PC)
+        try:
+            signal.signal(sig, _raise)
+        except (ValueError, OSError) as e:
+            print(f"[E2E] {name} 핸들러 설치 실패 — 그 신호로 종료 시 정리 안 됨: {e}")
+
+
 async def _ble_main_v3(service: EswFanServiceV3) -> None:
-    """v2 _ble_main 앞에 BLE 루프 연결만 추가 (러너 → notify 통로, docstring 6)."""
+    """v2 _ble_main + BLE 루프 연결(docstring 6) + 페어링 에이전트(docstring 8)."""
     service.attach_loop(asyncio.get_running_loop())
-    await _ble_main(service)
+    bus = await get_message_bus()
+
+    # 페어링 에이전트 (docstring 8) — 등록해두지 않으면 중앙(앱)이 본딩을
+    # 시도할 때 BlueZ가 응답할 수단이 없어 연결이 길게 매달리다 실패한다.
+    # 본딩 시도는 그 기기와 처음 연결할 때 일어나므로 "처음 실행할 때만 간혹
+    # 실패"로 나타난다 (실기 2026-08-27). NoIo = 입출력 없는 기기 →
+    # "just works" 페어링. 지역 변수로 붙잡아 둔다 — GC되면 D-Bus 객체가
+    # 사라져 등록이 풀린다.
+    agent = None
+    try:
+        from bluez_peripheral.agent import NoIoAgent
+        agent = NoIoAgent()
+        await agent.register(bus)
+        print("[BLE] 페어링 에이전트 등록 (NoIo)")
+    except Exception as e:
+        print(f"[BLE] 페어링 에이전트 등록 실패 — 첫 연결이 불안정할 수 있음: {e}")
+
+    await service.register(bus)
+    await _watch_disconnects(bus, service)
+
+    try:
+        adapter = await Adapter.get_first(bus)
+    except ValueError:
+        sys.exit("BLE 어댑터 없음 — 'bluetoothctl power on' 확인")
+
+    advert = Advertisement(LOCAL_NAME, [SERVICE_UUID], appearance=0x0000, timeout=0)
+    await advert.register(bus, adapter=adapter)
+
+    print(f"[BLE] Advertising 시작 — {LOCAL_NAME} (Ctrl+C 종료)")
+    await bus.wait_for_disconnect()
 
 
 def main() -> None:
@@ -631,6 +728,10 @@ def main() -> None:
               f"--body-exit-deg({args.body_exit_deg:g}°) 이하 — 재조준이 먼저 걸려 "
               "추적 폴백이 잘 안 나올 수 있습니다.")
 
+    # 하드웨어를 열기 전에 신호 처리를 걸어둔다 — 이후 어느 시점에 끊겨도
+    # finally/__exit__가 돌아 릴레이가 열린다 (docstring 9).
+    _exit_on_signals()
+
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
     tracker = PoseTracker()
 
@@ -666,16 +767,20 @@ def main() -> None:
                 # v1 _make_runner가 --axis tilt에서 args.gain을 덮어쓰므로
                 # 부위 러너용 게인은 그 전에 캡처한다 (_make_body_runner 참고).
                 body_gains = (args.gain, args.gain_tilt)
-                track_fn = _make_runner(args.axis, detector, tracker, mc, args, web_state)
+                # 일반 타겟 모드(0x02)도 인식 상태를 보고하도록 디텍터를 감싼다.
+                reporting_detector = _ReportingDetector(detector)
+                track_fn = _make_runner(args.axis, reporting_detector, tracker,
+                                        mc, args, web_state)
                 supervisor = _ModeSupervisorV3(track_fn, _make_sweeper(mc, args),
                                                _make_homer(mc, home_pan=False),
                                                _make_homer(mc, home_pan=True),
                                                stop_fn=mc.stop,
                                                web_state=web_state)
                 service = EswFanServiceV3(supervisor, fan)
-                # 부위 러너는 서비스의 report_*를 쓰므로 서비스 다음에 만든다.
+                # 부위 러너와 인식 보고기는 서비스의 report_*를 쓰므로 나중에 연결.
                 supervisor.set_body_runner(_make_body_runner(
                     detector, tracker, mc, fan, service, body_gains, args, web_state))
+                reporting_detector.attach(service)
 
                 print(f"[E2E] axis={args.axis} — BLE 전원/모드/풍량 명령 대기 중 (v3).")
                 try:

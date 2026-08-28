@@ -45,8 +45,8 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
   - 위치 기억(장부 영속화): 리밋 스위치·엔코더가 없어 절대 원점을 잴 수단이
     없으므로, 장부를 주기적으로 파일에 남겨 재시작 때 되살린다
     (hardware/position_store.py, restore_origin()). home()이 "지금 이 위치가
-    0°"라는 선언에 불과한 것을 보완하는 임시 수단이며, 탈조와 전원 차단 중
-    외력은 여전히 잡지 못한다 — 한계는 position_store.py docstring 참고.
+    0°"라는 선언에 불과한 것을 보완하는 임시 수단이며, 탈조는 여전히 잡지
+    못한다 — 한계는 position_store.py docstring 참고.
 
   - 펄스 타이밍: lgpio 펄스 스레드는 소프트웨어 타이밍이라 CPU 경쟁에 선점당하면
     스텝 간격이 흔들린다(추적 중 달그락 소음의 원인). open_chip()이 그 스레드만
@@ -560,8 +560,7 @@ class MotorController:
         lgpio.gpio_write(self.h, self.en_pin, 0)
 
     def disable(self) -> None:
-        """두 축 공통 disable. tilt는 웜기어 자체 잠금으로 위치가 유지되지만
-        pan은 직결이라 외력에 밀릴 수 있다 — 밀렸다면 재호밍 필요."""
+        """두 축 공통 disable. 두 축 모두 기어 자기잠금이라 위치는 유지된다."""
         lgpio.gpio_write(self.h, self.en_pin, 1)
 
     # ── 이동 ─────────────────────────────────────────────────────────────────

@@ -45,8 +45,8 @@ verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라
     실행 중 장부가 바뀔 때마다 상태 파일에 기록되고, 시작 시 restore_origin()이
     기록된 만큼 되돌아와 0°에서 출발한다. 종료 시에도 (0°,0°)로 복귀한다.
   - 영점 자체를 새로 잡으려면 scripts/set_origin.py를 한 번 실행한다.
-  - tilt는 웜기어 자기잠금이라 전원이 꺼져도 유지 → 복원 신뢰 가능. pan은 직결이라
-    EN 해제 중 외력에 밀렸으면 부정확 — 근본 해결은 호밍 도입 (hardware/TODO.md).
+  - 두 축 모두 기어 자기잠금이라 전원이 꺼져도 위치가 유지된다 → 복원 신뢰 가능.
+    남는 오차원은 탈조뿐이다 (hardware/TODO.md 호밍 항목).
 
 실기 검증 절차 (RPi 5, 레포 루트에서):
     # 0) 틸트 방향/속도는 verify_track_tilt.py로 먼저 확정할 것 (--invert 필요 여부)

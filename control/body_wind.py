@@ -86,15 +86,32 @@ class BodyPatrolScenario(FullBodyScenario):
         self.aim_bias_norm = aim_bias_norm or {}
 
     def _route(self):
+        """순찰 경로 — 켜진 부위(allowed)만, 켜진 게 하나면 그 자리에 고정.
+
+        PATROL_ORDER는 head→upper→lower→upper 왕복이라 상체가 두 번 들어 있다.
+        부위가 빠지면 같은 부위를 연달아 체류하게 되고(head→upper→upper),
+        하나만 켜면 그 부위를 두 번 도는 꼴이 된다 — 사용자에겐 "한 부위만
+        켰는데 왜 순찰하듯 움직이지"로 보인다. 그래서 연속 중복을 접는다:
+          부위 1개 → 그 부위 고정 조준 (체류만 하고 움직이지 않음)
+          부위 2개 → 그 둘만 왕복
+          부위 3개 → 원래 왕복 경로 그대로
+        """
         route = [r for r in self.PATROL_ORDER
                  if r in self.waypoints and r in self.allowed]
+        if len(set(route)) == 1:
+            return route[:1]                     # 한 부위 고정 조준
         if route:
-            return route
-        # 세기가 전부 0이면(사용자가 바람만 끈 상태) 경로가 빈다. 그대로 두면
-        # 부모의 patrol이 "웨이포인트 없음 → 스캔 재시작"을 매 프레임 반복해
-        # 스캔↔순찰 루프에 빠지므로, allowed를 무시하고 조준만 이어간다 —
-        # 풍속은 body_wind_level이 각 부위 세기(0)를 그대로 읽어 정지가 된다.
-        return [r for r in self.PATROL_ORDER if r in self.waypoints]
+            # 연속 중복 제거 (마지막↔처음 순환 포함) — head→upper→upper 방지.
+            return [r for i, r in enumerate(route) if r != route[i - 1]]
+        # 세기가 전부 0이면(바람만 끈 상태) 경로가 빈다. 그대로 두면 부모의
+        # patrol이 "웨이포인트 없음 → 스캔 재시작"을 매 프레임 반복해 스캔↔순찰
+        # 루프에 빠진다. 이때는 상체 한 곳에 머문다 — 바람도 없이 부위를 훑고
+        # 다니는 것보다 안정적이고, 세기를 다시 올리면 즉시 그 부위로 간다.
+        # (풍속은 body_wind_level이 그 부위 세기 0을 읽어 정지가 된다.)
+        for region in ("upper", "head", "lower"):
+            if region in self.waypoints:
+                return [region]
+        return []
 
     # 부위 순서 (틸트 값 오름차순 = 화면 위→아래). _spread_clamp가 쓴다.
     _SPREAD_ORDER = {"head": 0, "upper": 1, "lower": 2}

@@ -4,11 +4,9 @@ control/body_wind.py
 부위 인식 모드(0x03)의 순수 계산 보조 — GPIO/BlueZ/카메라를 import하지 않는다.
 scripts/verify_E2E_v3.py의 부위 러너가 사용한다.
 
-  - BodyPatrolScenario: FullBodyScenario의 순찰 경로만 필터 — 세기 0(정지)인
-    부위는 돌지 않는다. 스캔은 전 부위 그대로 한다(하체 틸트 추정이 head·upper
-    웨이포인트를 쓰므로 — fullbody_scenario._est_lower_tilt 참고). 상체는
-    프로토콜상 세기 0이 불가라(ble_protocol.md §3.3) 웨이포인트만 잡히면
-    경로가 비는 일은 없다.
+  - BodyPatrolScenario: FullBodyScenario를 부위 모드용으로 바꾼 것 —
+    반복 수렴 스캔을 **한 프레임 직접 매핑**으로 대체하고, 순찰 경로를
+    세기 ≥1인 부위로 제한하며, 부위 간 조준각을 벌린다.
   - body_wind_level: 풍속 중재 — 지금 겨누는 부위(스캔·순찰)의 저장 세기,
     겨누는 부위가 없는 동안(탐색·재조준)은 공용 세기(추적 모드와 동일 풍속).
   - MotionGate: 순찰 ↔ 추적 폴백 전환 판정.
@@ -22,12 +20,42 @@ from control.fullbody_scenario import FullBodyScenario
 
 
 class BodyPatrolScenario(FullBodyScenario):
-    """순찰 경로를 allowed 부위로 제한하고, 부위 간 조준각을 벌린 전신 시나리오.
+    """부위 모드용 전신 시나리오 — 스캔을 '직접 매핑'으로 대체한 파생 클래스.
 
+    ── 직접 매핑 (2026-08-27, 실기 "스캔이 너무 오래 걸림"에 대한 답) ────────
+    부모의 스캔은 부위를 하나씩 화면 중앙에 **반복 수렴**시켜 각도를 기록한다.
+    수직 FOV 41°(구세대 표준 렌즈) 전제의 설계였다 — 그때는 사람이 가까우면
+    머리와 발이 한 프레임에 같이 안 담겨서 틸트를 옮겨가며 찾을 수밖에 없었다.
+    지금 카메라는 Camera Module 3 Wide(수직 67°)라 부위 각도가
+        웨이포인트 = 현재 틸트 + (부위 cy에서 계산한 각도)
+    로 **한 프레임에** 나온다(거리 무관·순수 각도). 그래서 스캔 상태는 보이는
+    부위를 즉시 기록하고 곧바로 순찰로 넘어가는 매핑 단계가 되었다.
+
+    탐색 스윕을 두지 않은 근거(기하로 확인): 겨눌 수 있는 각도는 틸트 리밋
+    이내(|θ| ≤ 15°)이고 카메라는 현재 틸트 ±33.5°를 보므로, 틸트가 어디에
+    있든 겨눌 수 있는 부위는 **항상 이미 프레임 안**이다(최대 이격 30° <
+    33.5°). 프레임 밖으로 나가는 부위(근접 시의 발 등)는 어차피 리밋 밖이라
+    스윕으로 찾아내도 웨이포인트가 리밋으로 클램프된다 — 찾으나 추정하나
+    결과가 같다. 부위가 안 보이는 진짜 원인은 가림·저신뢰도인데 스윕은 그걸
+    해결하지 못한다. (틸트 리밋을 33.5° 너머로 넓히면 이 근거가 깨지므로
+    그때 스윕 도입을 재검토할 것.)
+
+    안 보이는 부위 처리:
+      - 관측되지 않은 부위는 **웨이포인트를 만들지 않는다** → _route에서 자동
+        제외되어 눈먼 조준을 하지 않고, 보이는 순간 _remap_others가 넣는다.
+      - 하체만 예외로, map_timeout_s가 지나도 못 보면 비율 추정
+        (_est_lower_tilt)으로 기록한다 — 사용자가 하체 세기를 지정했다면
+        어딘가는 겨눠야 하기 때문.
+      - 사람은 잡혔는데 세 부위 모두 신뢰도가 낮으면 매핑이 안 끝나므로,
+        타임아웃 후 가슴 좌표를 상체 웨이포인트로 삼아 진행한다(정체 차단).
+    부모(FullBodyScenario)는 건드리지 않는다 — verify_fulltrack.py는 그대로
+    반복 수렴 스캔을 쓴다.
+
+    ── 그 밖의 차이 ────────────────────────────────────────────────────────
     allowed는 러너가 매 프레임 "세기 ≥1인 부위"로 갱신한다 — 순찰 중 앱이
-    세기를 0으로 내리면 다음 부위 선택부터 빠지고, 다시 올리면 (스캔 때 기록된
-    웨이포인트가 있으므로) 즉시 경로에 복귀한다. 경로 길이가 변하면 순찰
-    인덱스가 한 부위를 건너뛰거나 반복할 수 있지만 한 사이클 안에서 정리된다.
+    세기를 0으로 내리면 다음 부위 선택부터 빠지고, 다시 올리면 (웨이포인트가
+    남아 있으므로) 즉시 경로에 복귀한다. 경로 길이가 변하면 순찰 인덱스가 한
+    부위를 건너뛰거나 반복할 수 있지만 한 사이클 안에서 정리된다.
 
     조준각을 벌리는 장치가 둘인데 역할이 다르다:
       aim_bias_norm  — 부위별 조준점을 옮긴다 (관측 쪽, __init__ 주석 참고).
@@ -36,9 +64,16 @@ class BodyPatrolScenario(FullBodyScenario):
     """
 
     def __init__(self, *args, aim_bias_norm: dict[str, float] | None = None,
-                 tilt_spread_deg: float = 0.0, **kwargs):
+                 tilt_spread_deg: float = 0.0, map_timeout_s: float = 1.5,
+                 remap_alpha: float = 0.3, **kwargs):
         super().__init__(*args, **kwargs)
         self.allowed: set[str] = {"head", "upper", "lower"}
+        # 매핑에서 부위가 안 보일 때 추정/진행으로 넘어가기까지의 시간 (s).
+        self.map_timeout_s = map_timeout_s
+        # 순찰 중 재매핑 EMA 계수 (_remap_others) — 좌표 잡음이 경로를 흔들지
+        # 않게 섞어 넣는다.
+        self.remap_alpha = remap_alpha
+        self._map_since: float | None = None
         # 부위별 틸트 구간 분리 폭 (°) — 아래 _spread_clamp 참고.
         self.tilt_spread_deg = tilt_spread_deg
         # 부위별 조준 편향 (정규화 화면 단위 ≈ 편향각/수직FOV, +는 위로 조준).
@@ -78,6 +113,92 @@ class BodyPatrolScenario(FullBodyScenario):
         hi = self.tilt_max - (2 - idx) * g
         return min(max(tilt_deg, lo), hi)
 
+    # ── 직접 매핑 (부모의 반복 수렴 스캔 대체) ───────────────────────────────
+
+    def active_region(self) -> str:
+        # 매핑 중에는 특정 부위를 겨누지 않는다(가슴 중심) → 조준 부위 없음.
+        # 풍속도 이 동안은 공용 세기가 된다 (body_wind_level).
+        return "-" if self.state == "scan" else super().active_region()
+
+    def _restart_scan(self) -> None:
+        super()._restart_scan()
+        self._map_since = None
+
+    def _tilt_of(self, region_obs: dict, cur_tilt: float) -> float:
+        """관측 좌표 → 그 부위를 겨누는 절대 틸트각 (한 프레임 매핑의 핵심)."""
+        return self._ct(cur_tilt + self._tilt_err(region_obs["cy"]))
+
+    def _enter_patrol(self) -> None:
+        self.state = "patrol"
+        self.scan_i = len(self.SCAN_ORDER)
+        self._patrol_i = 0
+        self._dwell_until = None
+        self._cvg = self._occl = 0
+        self._map_since = None
+        wps = "  ".join(f"{k}:{v['tilt']:+.1f}°{'(추정)' if v['estimated'] else ''}"
+                        for k, v in self.waypoints.items())
+        self.events.append(f"매핑 완료 → 순찰 시작: {wps} @ pan {self.body_pan:+.1f}°")
+
+    def _step_scan(self, obs: dict, cur_pan: float, cur_tilt: float):
+        """부모의 반복 수렴 스캔을 대체하는 한 프레임 매핑 (클래스 docstring)."""
+        if self._map_since is None:
+            self._map_since = obs["t"]
+        chest = obs["chest"]
+
+        # 1) 이번 프레임에 실제로 보이는 부위를 즉시 기록한다.
+        for region in self.SCAN_ORDER:
+            if obs["fresh"][region]:
+                self.waypoints[region] = {
+                    "tilt": self._tilt_of(obs["regions"][region], cur_tilt),
+                    "estimated": False}
+
+        # 2) 헤드는 가슴을 중앙으로 (부위 조준은 순찰이 한다).
+        pan_t, tilt_t = self.body_pan, cur_tilt
+        if chest["visible"]:
+            pan_t = self._cp(cur_pan + self.gain * self._pan_err(chest["cx"]))
+            tilt_t = self._ct(cur_tilt + self.gain_tilt * self._tilt_err(chest["cy"]))
+            self.body_pan = pan_t
+
+        # 3) 세기 ≥1인 부위가 다 모였으면 곧바로 순찰 (보통 첫 프레임).
+        need = (self.allowed & set(self.SCAN_ORDER)) or {"upper"}
+        if need <= self.waypoints.keys():
+            self._enter_patrol()
+            return pan_t, tilt_t
+
+        # 4) 타임아웃 — 하체는 비율 추정, 아무것도 없으면 가슴을 상체로 삼아
+        #    진행한다(사람은 잡혔는데 부위 신뢰도가 낮은 경우의 정체 차단).
+        if obs["t"] - self._map_since >= self.map_timeout_s:
+            if "lower" in need and "lower" not in self.waypoints:
+                est = self._est_lower_tilt()
+                if est is not None:
+                    self.waypoints["lower"] = {"tilt": est, "estimated": True}
+            if not self.waypoints and chest["visible"]:
+                self.waypoints["upper"] = {"tilt": self._tilt_of(chest, cur_tilt),
+                                           "estimated": True}
+                self.events.append("[map] 부위 미검출 — 가슴을 상체로 대체")
+            if self.waypoints:
+                self._enter_patrol()
+        return pan_t, tilt_t
+
+    def _remap_others(self, obs: dict, cur_tilt: float, aimed: str) -> None:
+        """순찰 중, 조준 중이 아닌 부위의 웨이포인트를 보이는 대로 갱신한다.
+
+        매핑이 한 프레임짜리라 갱신도 상시 가능하다 — 사용자가 움직이거나
+        거리가 변해도 재스캔 없이 경로가 최신으로 유지되고, 처음에 추정으로
+        때운 부위도 보이는 순간 실제 값으로 교정된다. 조준 중인 부위는
+        제외한다 — 부모의 도착 판정(현재각 vs 웨이포인트)이 흔들리기 때문.
+        """
+        for region in self.SCAN_ORDER:
+            if region == aimed or not obs["fresh"][region]:
+                continue
+            tilt = self._tilt_of(obs["regions"][region], cur_tilt)
+            wp = self.waypoints.get(region)
+            if wp is None:
+                self.waypoints[region] = {"tilt": tilt, "estimated": False}
+            else:
+                wp["tilt"] += self.remap_alpha * (tilt - wp["tilt"])
+                wp["estimated"] = False
+
     def step(self, obs: dict):
         biased = {r: b for r, b in self.aim_bias_norm.items()
                   if b and obs["regions"].get(r, {}).get("visible")}
@@ -92,6 +213,9 @@ class BodyPatrolScenario(FullBodyScenario):
         # 뒤에 읽으면 이번 목표각에 다음 부위의 구간이 걸린다.
         region = self.active_region()
         pan_t, tilt_t = super().step(obs)
+        if self.state == "patrol":
+            # 제외 대상은 step 이후의 조준 부위 — 다음 프레임 도착 판정의 기준.
+            self._remap_others(obs, obs["pos"][1], self.active_region())
         return pan_t, self._spread_clamp(region, tilt_t)
 
 

@@ -27,9 +27,11 @@ verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레
   5. 부위 모드(0x03) 실동작 — 단일 세션 러너(_make_body_runner)가 내부 2상으로
      돈다. v2는 0x03을 0x02와 동일 취급 + 풍속 0이었다.
        순찰(patrol): BodyPatrolScenario(control/body_wind.py)가 head→upper→
-         lower 순회(세기 0 부위 제외, 스캔은 전 부위). 순찰 중 조준 부위의
-         저장 세기를 릴레이에 적용. 스캔/탐색/재조준처럼 조준이 확정되지 않은
-         구간은 공용 세기(추적 모드와 동일)를 유지한다 — 아래 폴백과 같은 규칙.
+         lower 순회(세기 0 부위 제외). 부위 각도는 반복 수렴 스캔이 아니라
+         **한 프레임 직접 매핑**으로 잡고 곧바로 순찰에 들어간다(수직 FOV 67°
+         광각이라 전신이 한 프레임에 담긴다 — 근거는 그쪽 클래스 docstring).
+         풍속은 지금 겨누는 부위의 저장 세기를 쓰고, 겨누는 부위가 없는
+         동안(매핑·탐색·재조준)은 공용 세기 — 아래 폴백과 같은 규칙.
        추적 폴백(fallback): 순찰 안정 상태에서 최근 --body-exit-window 동안
          팬 이동량 > --body-exit-deg면 전환 (팬은 사용자를 따라갈 때만 움직여
          헤드 자체 스윙에 면역 — control/body_wind.py MotionGate 참고).
@@ -133,15 +135,18 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
     """부위 모드(0x03) 러너 — 내부 2상(순찰↔추적 폴백) 단일 세션 (docstring 5).
 
     verify_fulltrack._track_loop를 세션형(stop_event)으로 옮기고 풍속 중재
-    (patrol_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
+    (body_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
     시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자 위치·거리가
-    달라졌을 수 있어 웨이포인트를 처음부터 다시 잡는 게 안전하다.
+    달라졌을 수 있어서인데, 직접 매핑이라 다시 잡는 비용이 한 프레임이다.
     gains=(pan, tilt)는 main에서 미리 캡처한 값 — v1 _make_runner가 --axis tilt
     에서 args.gain을 덮어쓰기 때문에 args를 런타임에 읽으면 안 된다.
     """
     fov = CFG["fov"]
     fov_h, fov_v = fov["h"], fov["v"]
     gain_pan, gain_tilt = gains
+    # 수렴 구간용 축소 데드존 — 아래 apply_deadzone 주석 참고.
+    conv_dz_pan = min(args.body_deadzone, 0.5 * gain_pan * args.body_converge)
+    conv_dz_tilt = min(args.body_deadzone_tilt, 0.5 * gain_tilt * args.body_converge)
     sign_pan = -1.0 if args.invert else 1.0
     sign_tilt = -1.0 if args.invert_tilt else 1.0
 
@@ -156,12 +161,10 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             gain=gain_pan, gain_tilt=gain_tilt,
             invert_pan=args.invert, invert_tilt=args.invert_tilt,
             dwell_s=args.body_dwell,
-            # 스캔 단축 튜닝 (실기 2026-08-27: 기본값이 너무 느림) — 수렴 판정
-            # 완화 + 미검출 타임아웃 단축 + 블라인드 스윕 가속.
             converge_deg=args.body_converge,
-            converge_frames=args.body_converge_frames,
-            occl_frames=args.body_occl_frames,
-            blind_deg=args.body_blind_deg,
+            # 스캔은 한 프레임 직접 매핑으로 대체됐다 — 부모의 반복 수렴
+            # 인자(converge_frames/occl_frames/blind_deg)는 쓰이지 않는다.
+            map_timeout_s=args.body_map_timeout,
             # 시나리오 자체 이동 감지(recenter)는 게이트보다 둔하게 — 게이트가
             # 1차 판정자다 (docstring 5의 "이동 감지 우선순위" 참고).
             move_thr_deg=args.body_move_thr,
@@ -185,7 +188,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             f"{r}[{scenario._spread_clamp(r, args.tilt_min):+.0f},"
             f"{scenario._spread_clamp(r, args.tilt_max):+.0f}]"
             for r in ("head", "upper", "lower"))
-        print(f"[E2E] 부위 순찰 세션 시작 (전신 스캔부터) — 틸트 구간 {spread}")
+        print(f"[E2E] 부위 순찰 세션 시작 (직접 매핑) — 틸트 구간 {spread}")
         try:
             while not stop_event.is_set():
                 t0 = time.time()
@@ -266,8 +269,15 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
 
                 # 데드존은 부위 모드 전용 인자를 쓴다 — args.deadzone은 --axis
                 # tilt일 때 _make_runner가 틸트 값으로 덮어쓰기 때문(게인과 동일).
-                pan_g = apply_deadzone(pan_t, last_pan, args.body_deadzone)
-                tilt_g = apply_deadzone(tilt_t, last_tilt, args.body_deadzone_tilt)
+                # 수렴 판정이 걸린 구간(재조준·탐색)에서는 좁힌 값을 쓴다:
+                # 명령 스텝이 gain×오차라, 데드존이 gain×converge_deg보다 크면
+                # 오차가 판정선 근처일 때 명령이 통째로 억제돼 그 상태에서
+                # 영영 못 벗어난다 (실기 2026-08-27 스캔 정체의 원인).
+                converging = scenario.state in ("recenter", "search")
+                pan_g = apply_deadzone(pan_t, last_pan,
+                                       conv_dz_pan if converging else args.body_deadzone)
+                tilt_g = apply_deadzone(tilt_t, last_tilt,
+                                        conv_dz_tilt if converging else args.body_deadzone_tilt)
                 if not stop_event.is_set() and (pan_g, tilt_g) != (last_pan, last_tilt):
                     mc.move_to(pan_g, tilt_g)
                     last_pan, last_tilt = pan_g, tilt_g
@@ -562,15 +572,10 @@ def main() -> None:
                    help="부위 모드 팬 데드존 (° — 미세 흔들림 억제)")
     p.add_argument("--body-deadzone-tilt", type=float, default=1.0,
                    help="부위 모드 틸트 데드존 (°)")
-    # 스캔 단축 (fulltrack 기본 1.5°/4프레임/50프레임/2.0°가 실기에서 느림)
     p.add_argument("--body-converge", type=float, default=2.5,
-                   help="스캔 수렴 판정 오차 (°)")
-    p.add_argument("--body-converge-frames", type=int, default=3,
-                   help="스캔 수렴 판정 연속 프레임")
-    p.add_argument("--body-occl-frames", type=int, default=30,
-                   help="부위 미검출 포기 프레임 (추정 기록 후 진행)")
-    p.add_argument("--body-blind-deg", type=float, default=4.0,
-                   help="미관측 부위 블라인드 스윕 이동량 (화면각 °/프레임)")
+                   help="수렴 판정 오차 (° — 순찰 도착·재조준·탐색 공용)")
+    p.add_argument("--body-map-timeout", type=float, default=1.5,
+                   help="매핑에서 부위가 안 보일 때 추정으로 넘어가는 시간 (s)")
     # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
@@ -617,9 +622,7 @@ def main() -> None:
             or args.body_tilt_spread < 0
             or args.body_move_thr <= 0 or args.body_rescan_thr <= 0
             or args.body_deadzone <= 0 or args.body_deadzone_tilt <= 0
-            or args.body_converge <= 0
-            or args.body_converge_frames < 1 or args.body_occl_frames < 1
-            or args.body_blind_deg <= 0):
+            or args.body_converge <= 0 or args.body_map_timeout <= 0):
         print("[ERROR] --body-* 인자 범위가 잘못됐습니다 (help 참고)")
         sys.exit(1)
     if args.body_move_thr <= args.body_exit_deg:

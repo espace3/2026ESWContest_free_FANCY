@@ -43,13 +43,13 @@ verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레
          게이트(--body-exit-deg)보다 둔하게 둔다 — recenter가 먼저 걸리면 게이트
          창이 비워져(비 patrol) 폴백이 안 나오고, 작은 흔들림에도 순찰이 자주
          끊긴다 (실기 2026-08-27). 미세 흔들림은 --body-deadzone으로 억제한다.
-       조준각 벌리기: 부위 간 틸트 간격이 실기에서 작아(거리 2m에 머리↔상체
-         ~10° + 틸트 리밋 ±15°) 두 장치를 쓴다 —
-         --body-head-bias/--body-upper-bias는 조준점을 옮기고(관측 쪽),
-         --body-tilt-spread는 부위별 틸트 구간을 어긋나게 잘라(출력 쪽)
-         아래쪽 리밋을 하체 전용으로 남긴다. 후자가 없으면 상체가 리밋에
-         눌릴 때 하체도 같은 각도가 되어 순찰이 멈춘 것처럼 보인다
-         (control/body_wind.py aim_bias_norm / _spread_clamp 참고).
+       조준각과 거리: 부위 조준각은 관측에서 바로 나오므로(순수 각도)
+         거리 보정이 이미 되어 있다. 우리가 더하는 보정(머리를 위로,
+         부위 간 최소 간격)만 고정 각도로 두면 거리에 따라 어긋나므로
+         **측정된 머리↔상체 간격의 배수**로 준다 (--body-head-ratio 등).
+       순찰은 도착 판정 없이 **시간 슬롯**으로 돈다 — 슬롯 = 체류 시간 +
+         이동 시간(추정). 도착 판정을 쓰면 잡음 억제용 데드존이 남기는
+         정지 오차 때문에 그 부위에 갇힌다 (control/body_wind.py 참고).
      러너 교체가 아니라 내부 상 전환이라 카메라 세션이 안 끊기고, 전환마다
      유효 모드 push [0x03, 모드]가 나간다. 폴백 중 가슴을 잃으면 마지막 조준을
      유지한다(재탐색 스윕은 순찰 상의 search 몫 — 알려진 한계).
@@ -189,7 +189,9 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
     fov = CFG["fov"]
     fov_h, fov_v = fov["h"], fov["v"]
     gain_pan, gain_tilt = gains
-    # 수렴 구간용 축소 데드존 — 아래 apply_deadzone 주석 참고.
+    # 재조준·탐색은 부모가 수렴 판정으로 진행을 막으므로, 그 구간에서만
+    # 데드존을 gain x converge_deg 아래로 좁힌다 (순찰은 시간 슬롯이라
+    # 도착 판정이 없어 사용자 데드존을 그대로 써도 갇히지 않는다).
     conv_dz_pan = min(args.body_deadzone, 0.5 * gain_pan * args.body_converge)
     conv_dz_tilt = min(args.body_deadzone_tilt, 0.5 * gain_tilt * args.body_converge)
     sign_pan = -1.0 if args.invert else 1.0
@@ -215,9 +217,11 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             move_thr_deg=args.body_move_thr,
             rescan_thr_deg=args.body_rescan_thr,
             # 조준 편향: 머리는 위로, 상체는 아래로 — 부위 간 틸트 간격 확대
-            aim_bias_norm={"head": args.body_head_bias / fov_v,
-                           "upper": -args.body_upper_bias / fov_v},
-            tilt_spread_deg=args.body_tilt_spread)
+            # 조준 보정은 각도가 아니라 측정 간격의 배수 — 거리 자동 대응.
+            aim_ratio={"head": args.body_head_ratio,
+                       "upper": args.body_upper_ratio},
+            spread_ratio=args.body_spread_ratio,
+            tilt_rate_dps=args.body_tilt_rate)
         gate = MotionGate(args.body_exit_deg, args.body_exit_window,
                           args.body_still_s, args.body_still_deg)
         tracker.reset()  # 이전 세션의 스무딩 잔재 제거
@@ -229,11 +233,9 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         fps_hist: list[float] = []
         t_prev = time.time()
         last_log = 0.0
-        spread = " ".join(
-            f"{r}[{scenario._spread_clamp(r, args.tilt_min):+.0f},"
-            f"{scenario._spread_clamp(r, args.tilt_max):+.0f}]"
-            for r in ("head", "upper", "lower"))
-        print(f"[E2E] 부위 순찰 세션 시작 (직접 매핑) — 틸트 구간 {spread}")
+        print(f"[E2E] 부위 순찰 세션 시작 (매핑 + 시간 슬롯) — 조준 배수 "
+              f"머리 {args.body_head_ratio:g} 상체 {args.body_upper_ratio:g} "
+              f"최소간격 {args.body_spread_ratio:g} (측정 간격 대비)")
         try:
             while not stop_event.is_set():
                 t0 = time.time()
@@ -313,12 +315,10 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                         service.report_effective(0x03)
                         print("\n[E2E] 정지 감지 → 부위 순찰 재개")
 
-                # 데드존은 부위 모드 전용 인자를 쓴다 — args.deadzone은 --axis
-                # tilt일 때 _make_runner가 틸트 값으로 덮어쓰기 때문(게인과 동일).
-                # 수렴 판정이 걸린 구간(재조준·탐색)에서는 좁힌 값을 쓴다:
-                # 명령 스텝이 gain×오차라, 데드존이 gain×converge_deg보다 크면
-                # 오차가 판정선 근처일 때 명령이 통째로 억제돼 그 상태에서
-                # 영영 못 벗어난다 (실기 2026-08-27 스캔 정체의 원인).
+                # 데드존은 원래 목적(포즈 잡음이 모터로 새는 것 차단)대로
+                # 쓴다. 순찰이 시간 슬롯이라 도착 판정이 없어져, 데드존이
+                # 남기는 정지 오차가 진행을 막지 않는다. 다만 재조준·탐색은
+                # 부모가 여전히 수렴으로 판정하므로 그때만 좁힌다.
                 converging = scenario.state in ("recenter", "search")
                 pan_g = apply_deadzone(pan_t, last_pan,
                                        conv_dz_pan if converging else args.body_deadzone)
@@ -651,13 +651,19 @@ def main() -> None:
                    help="폴백 중 순찰 재진입 정지 시간 (s)")
     p.add_argument("--body-still-deg", type=float, default=3.0,
                    help="정지 판정 팬 각 범위 (°)")
-    p.add_argument("--body-head-bias", type=float, default=11.0,
-                   help="머리 조준 상향 편향 (° — 부위 간 틸트 간격 확대)")
-    p.add_argument("--body-upper-bias", type=float, default=0.5,
-                   help="상체 조준 하향 편향 (° — 머리/상체 구분 확대)")
-    p.add_argument("--body-tilt-spread", type=float, default=3.0,
-                   help="부위별 틸트 구간 분리 폭 (° — 아래쪽 리밋은 하체 전용, "
-                        "상체는 그보다 이만큼 위에서 멈춘다. 0이면 분리 없음)")
+    p.add_argument("--body-head-ratio", type=float, default=1.1,
+                   help="머리 조준을 위로 올릴 배수 (측정 머리↔상체 간격 대비)")
+    p.add_argument("--body-upper-ratio", type=float, default=0.45,
+                   help="상체 조준을 위로 올릴 배수 (머리와 같은 방향. 음수면 "
+                        "아래로. upper 부위 중심은 어깨+엉덩이 중점이라 배꼽 "
+                        "근처여서, 가슴을 맞히려면 올려야 한다)")
+    p.add_argument("--body-spread-ratio", type=float, default=0.15,
+                   help="부위 간 최소 조준 간격 배수. 머리가 위 리밋에 붙으면 "
+                        "이 간격만큼 상체를 아래로 밀어내므로, 크게 잡으면 "
+                        "근거리에서 상체 조준이 가슴보다 내려간다 (실측 92cm "
+                        "마운트·1m에서 0.3이면 126cm, 0.15면 132cm)")
+    p.add_argument("--body-tilt-rate", type=float, default=11.0,
+                   help="틸트 순항 속도 (도/s, 실측) — 슬롯의 이동 시간 산정용")
     # 미세 움직임 둔감화 (실기 2026-08-27: 작은 흔들림에 순찰이 자주 끊김).
     # 시나리오 자체 이동 감지는 게이트(--body-exit-deg)보다 위에 둬야 게이트가
     # 1차 판정자가 된다 — 낮으면 recenter가 먼저 걸려 폴백이 안 나온다.
@@ -666,9 +672,9 @@ def main() -> None:
     p.add_argument("--body-rescan-thr", type=float, default=30.0,
                    help="재조준 후 전신 재스캔 판정 이동량 (°)")
     p.add_argument("--body-deadzone", type=float, default=2.0,
-                   help="부위 모드 팬 데드존 (° — 미세 흔들림 억제)")
+                   help="팬 데드존 (° — 포즈 잡음이 모터로 새는 것 차단)")
     p.add_argument("--body-deadzone-tilt", type=float, default=1.0,
-                   help="부위 모드 틸트 데드존 (°)")
+                   help="틸트 데드존 (°)")
     p.add_argument("--body-converge", type=float, default=2.5,
                    help="수렴 판정 오차 (° — 순찰 도착·재조준·탐색 공용)")
     p.add_argument("--body-map-timeout", type=float, default=1.5,
@@ -715,10 +721,10 @@ def main() -> None:
         sys.exit(1)
     if (args.body_dwell <= 0 or args.body_exit_deg <= 0 or args.body_exit_window <= 0
             or args.body_still_s <= 0 or args.body_still_deg <= 0
-            or args.body_head_bias < 0 or args.body_upper_bias < 0
-            or args.body_tilt_spread < 0
+            or args.body_spread_ratio < 0 or args.body_tilt_rate <= 0
             or args.body_move_thr <= 0 or args.body_rescan_thr <= 0
             or args.body_deadzone <= 0 or args.body_deadzone_tilt <= 0
+
             or args.body_converge <= 0 or args.body_map_timeout <= 0):
         print("[ERROR] --body-* 인자 범위가 잘못됐습니다 (help 참고)")
         sys.exit(1)

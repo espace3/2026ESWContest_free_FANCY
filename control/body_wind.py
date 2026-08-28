@@ -292,6 +292,14 @@ class BodyPatrolScenario(FullBodyScenario):
             for r, b in biased.items():
                 region = obs["regions"][r]
                 obs["regions"][r] = dict(region, cy=region["cy"] - b)
+        # 켜진 부위인데 웨이포인트가 없으면 매핑으로 되돌아간다 — 순찰 중에
+        # 사용자가 부위를 새로 켠 경우다. 그냥 두면 _route가 그 부위를
+        # (웨이포인트가 없으므로) 세지 못해 "켜진 부위 1개 = 고정 조준"으로
+        # 남아, 부위를 켰는데 아무 반응이 없다 (실기 2026-08-28: 머리만 켠 뒤
+        # 하체를 켜도 머리만 계속 조준, 사용자가 움직여 재매핑이 돌면 정상화).
+        # 매핑은 보이면 다음 프레임에, 안 보이면 map_timeout_s 뒤 추정으로 채운다.
+        if self.state == "patrol" and self.allowed - self.waypoints.keys():
+            self._restart_scan()
         # 조준 부위는 step 전에 읽는다 — step이 다음 부위로 넘어갈 수 있어서,
         # 뒤에 읽으면 이번 목표각에 다음 부위의 구간이 걸린다.
         region = self.active_region()

@@ -275,6 +275,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 cur_pan, cur_tilt = mc.current_position()
                 levels = _region_levels()
                 scenario.allowed = {r for r, lv in levels.items() if lv > 0}
+                scenario.levels = levels   # 세기 0인 부위는 체류 없이 지나간다
                 chest_err = (sign_pan * compute_pan_angle(chest["cx"], fov_h)
                              if chest["visible"] else 0.0)
 

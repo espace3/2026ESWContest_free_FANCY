@@ -5,6 +5,15 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'ble_protocol.dart' as proto;
 
+/// 연결 확립 전(서비스 발견 등 절차 중)에 상대가 연결을 닫은 경우.
+/// 이번 시도의 실패로 돌려 재시도/안내 경로를 타게 하려고 따로 둔다.
+class BleDroppedDuringConnect implements Exception {
+  const BleDroppedDuringConnect();
+
+  @override
+  String toString() => '연결 절차 중 끊김 (기기가 연결을 닫음)';
+}
+
 /// write 후 에코백(Status 0x01) 대기 항목 — 타임아웃이면 미확인 write로 본다.
 class _PendingEcho {
   _PendingEcho(this.charNo, this.value, this.timer);
@@ -33,6 +42,23 @@ class BleConnectionService extends ChangeNotifier {
   /// 에코백 미수신 판정 시간 (ble_protocol.md §3.4).
   static const echoTimeout = Duration(seconds: 3);
 
+  /// 연결 시도 하나의 제한 시간. universal_ble 기본값은 **60초**라, 실패할
+  /// 연결도 1분을 매달린 뒤에야 실패가 드러난다(재시도까지 하면 2분 —
+  /// 실기 2026-08-27 "연결 버튼을 누르고 한참 뒤에 실패"의 정체).
+  /// 짧게 끊고 여러 번 시도하는 편이 성공률도 체감 속도도 낫다.
+  static const _connectTimeout = Duration(seconds: 15);
+
+  /// 시도 사이 대기 (총 시도 횟수 = 항목 수 + 1). 안드로이드는 그 기기와의
+  /// 첫 GATT 연결이 133으로 튕기는 일이 흔해, 빠른 재시도로 흡수한다.
+  static const _retryDelays = [
+    Duration(milliseconds: 500),
+    Duration(seconds: 2),
+  ];
+
+  /// 재시도 전 낡은 연결을 정리할 때의 제한 시간 — disconnect도 기본이 60초라
+  /// 그대로 두면 정리 단계에서 다시 오래 매달린다.
+  static const _cleanupTimeout = Duration(seconds: 5);
+
   /// 예기치 못한 끊김 후 자동 재연결을 시도하는 시간창 — 이 안에 성공하면
   /// FanStateService가 전원까지 복원한다 (순단 자가 치유).
   static const reconnectWindow = Duration(seconds: 30);
@@ -45,6 +71,11 @@ class BleConnectionService extends ChangeNotifier {
   final _pendingEchoes = <_PendingEcho>[];
   Object? _reconnectToken;
   bool _debugFake = false;
+  List<BleService> _lastServices = const [];
+
+  /// 진행 중인 연결 시도가 끊김을 만나면 여기로 알려 시도를 즉시 실패시킨다
+  /// (확립 후의 끊김은 [_handleDrop] 경로).
+  Completer<void>? _pendingDrop;
 
   /// Status notify 중 에코백을 제외한 타입 — FanStateService가 해석한다.
   void Function(Uint8List value)? onStatusNotify;
@@ -65,39 +96,88 @@ class BleConnectionService extends ChangeNotifier {
   /// 테스트 훅 여부 — 타이머/실 BLE를 만들면 안 되는 경로의 분기용.
   bool get isDebugFake => _debugFake;
 
+  /// 마지막 연결 절차에서 발견한 서비스 목록.
+  /// 호출부(스캔 페이지 로그 등)가 이 값을 읽어 쓰게 해서 연결 직후
+  /// discoverServices를 또 던지는 일을 없앤다 — 안드로이드에서 연결 직후
+  /// GATT 작업을 연달아 던지면 133 실패를 유발한다.
+  List<BleService> get lastServices => List.unmodifiable(_lastServices);
+
   Future<void> connect(BleDevice device) async {
     _reconnectToken = null; // 진행 중인 자동 재연결 취소 — 수동 연결 우선
     final id = device.deviceId;
-    try {
-      await _establish(id);
-    } catch (_) {
-      // 이전 실행이 정상 종료 못 해(앱이 백그라운드에서 OS에 강제 종료되는 등)
-      // RPi가 낡은 연결을 붙들고 있으면 첫 시도가 타임아웃날 수 있다.
-      // 반쯤 열린 연결을 정리하고 잠깐 뒤 1회 재시도해 흡수한다.
+    _listenConnection(id, device.name);
+    for (var attempt = 0; ; attempt++) {
       try {
-        await UniversalBle.disconnect(id);
-      } catch (_) {}
-      await Future.delayed(const Duration(seconds: 1));
-      await _establish(id); // 재시도도 실패하면 예외를 그대로 던져 호출부가 안내.
+        await _establish(id);
+        break;
+      } catch (e) {
+        if (attempt >= _retryDelays.length) {
+          // 마지막 시도까지 실패 — 걸어둔 구독을 정리하고 예외는 그대로 던져
+          // 호출부(스캔 페이지)가 사용자에게 원인을 보여준다.
+          await _detachAttempt();
+          rethrow;
+        }
+        debugPrint('BLE 연결 시도 ${attempt + 1} 실패($e) — 정리 후 재시도');
+        // 이전 실행이 정상 종료 못 해(앱이 백그라운드에서 OS에 강제 종료되는 등)
+        // RPi가 낡은 연결을 붙들고 있으면 첫 시도가 실패한다. 반쯤 열린 연결을
+        // 정리하고 잠깐 뒤 다시 시도해 흡수한다.
+        try {
+          await UniversalBle.disconnect(id, timeout: _cleanupTimeout);
+        } catch (_) {}
+        await Future.delayed(_retryDelays[attempt]);
+      }
     }
     _attach(id, device.name);
   }
 
   Future<void> _establish(String id) async {
-    await UniversalBle.connect(id);
+    // 절차 도중의 끊김(아래 [_listenConnection])을 이번 시도의 실패로 받는다.
+    final drop = _pendingDrop = Completer<void>();
+    try {
+      await Future.any([_runConnectSteps(id), drop.future]);
+    } finally {
+      if (identical(_pendingDrop, drop)) _pendingDrop = null;
+    }
+  }
+
+  Future<void> _runConnectSteps(String id) async {
+    await UniversalBle.connect(id, timeout: _connectTimeout);
     // Windows(WinRT)는 서비스 발견 전 write가 실패할 수 있어 연결 절차에 포함.
-    await UniversalBle.discoverServices(id);
+    _lastServices = await UniversalBle.discoverServices(id);
     await _subscribeStatus(id);
   }
 
-  /// 연결 확립 후 공통 마무리 — 필드/연결 스트림 배선 + 통지.
+  /// 연결 이벤트 구독 — 반드시 [UniversalBle.connect] **전에** 건다.
+  /// connectionStream은 과거 이벤트를 재생하지 않는 broadcast 스트림이라,
+  /// 확립 후에 구독하면 수 초 걸리는 서비스 발견 도중의 끊김을 통째로 놓쳐
+  /// "연결됨"으로 오표시되고 첫 write가 실패할 때까지 모른다 (실기 재현).
+  void _listenConnection(String id, String? name) {
+    unawaited(_connectionSub?.cancel());
+    _connectionSub = UniversalBle.connectionStream(id).listen((connected) {
+      if (connected) return;
+      final pending = _pendingDrop;
+      if (pending != null && !pending.isCompleted) {
+        pending.completeError(const BleDroppedDuringConnect()); // 확립 전 → 시도 실패
+      } else if (_deviceId == id) {
+        _handleDrop(id, name, unexpected: true); // 확립 후 → 자동 재연결
+      }
+    });
+  }
+
+  /// 실패한 연결 시도의 잔여물 정리 — 확립 전이라 앱 상태는 건드릴 게 없다.
+  Future<void> _detachAttempt() async {
+    await _connectionSub?.cancel();
+    _connectionSub = null;
+    await _statusSub?.cancel();
+    _statusSub = null;
+    _lastServices = const [];
+  }
+
+  /// 연결 확립 후 공통 마무리 — 필드 반영 + 통지.
+  /// 연결 스트림은 시도 전에 [_listenConnection]이 이미 걸어 뒀다.
   void _attach(String id, String? name) {
     _deviceId = id;
     _deviceName = name;
-    unawaited(_connectionSub?.cancel());
-    _connectionSub = UniversalBle.connectionStream(id).listen((connected) {
-      if (!connected) _handleDrop(id, name, unexpected: true);
-    });
     notifyListeners();
   }
 
@@ -148,9 +228,10 @@ class BleConnectionService extends ChangeNotifier {
   /// 연결 상실 공통 처리 — 앱 상태를 먼저 비워 UI를 즉시 바로잡는다.
   /// [unexpected]면 자동 재연결을 시작한다.
   void _handleDrop(String id, String? name, {required bool unexpected}) {
-    if (_deviceId != id) return;
+    if (_deviceId != id) return; // 확립 전(pending) 끊김은 _listenConnection이 처리
     _deviceId = null;
     _deviceName = null;
+    _lastServices = const [];
     for (final p in _pendingEchoes) {
       p.timer.cancel();
     }
@@ -171,6 +252,7 @@ class BleConnectionService extends ChangeNotifier {
     while (DateTime.now().isBefore(deadline)) {
       await Future.delayed(_reconnectInterval);
       if (_reconnectToken != token || _deviceId != null) return; // 취소/수동 연결
+      _listenConnection(id, name); // 여기서도 절차 중 끊김을 놓치면 안 된다
       try {
         await _establish(id);
       } catch (_) {
@@ -182,6 +264,7 @@ class BleConnectionService extends ChangeNotifier {
       onAutoReconnected?.call();
       return;
     }
+    if (_reconnectToken == token) await _detachAttempt(); // 마지막 시도의 구독 정리
     debugPrint('BLE 자동 재연결 포기 — 수동 연결 필요');
   }
 
@@ -218,7 +301,7 @@ class BleConnectionService extends ChangeNotifier {
       // 으로 재현됨). 서비스를 재발견해 캐시를 갱신하고 1회 재시도한다.
       debugPrint('BLE write 실패: $e — 서비스 재발견 후 재시도');
       try {
-        await UniversalBle.discoverServices(id);
+        _lastServices = await UniversalBle.discoverServices(id);
         await _writeRaw(id, charUuid, value);
         return true;
       } catch (e2) {

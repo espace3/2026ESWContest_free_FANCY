@@ -37,11 +37,23 @@ class FanStateService extends ChangeNotifier {
   final Map<int, int> _bodyStrengths = {0x01: 0, 0x02: 1, 0x03: 0}; // 상체 ≥1
 
   /// RPi 관측 보고 — 객체 인식 여부 (Status 0x02).
-  bool recognized = false;
+  /// null = 아직 보고 없음(추적이 안 도는 모드이거나 첫 보고 전). RPi는
+  /// 깜빡임을 억제해 보내므로(control/recognition_reporter.py) 값이 자주
+  /// 바뀌지 않는다.
+  bool? recognized;
 
   /// RPi가 실제로 돌리는 모드 (Status 0x03/0x04). 부위 모드 중 이동 감지로
   /// 추적에 내려가 있는 동안만 [modeByte]와 다르다.
   int? effectiveMode;
+
+  /// 추적이 도는 모드(타겟/타겟-부위)가 아니면 인식 보고가 오지 않으므로,
+  /// 남아 있던 값을 지워 화면이 낡은 상태를 보여주지 않게 한다.
+  void _clearRecognitionIfIdle() {
+    if (!_powerOn || _page != 1) {
+      recognized = null;
+      effectiveMode = null;
+    }
+  }
 
   bool _wasPoweredOn = false; // 끊김 시점의 전원 — 자동 재연결 복원 판단
   bool _wasConnected = false;
@@ -115,6 +127,7 @@ class FanStateService extends ChangeNotifier {
     final ok = await _ble.writePower(false);
     if (ok) {
       _powerOn = false;
+      _clearRecognitionIfIdle();
       notifyListeners();
     }
     return ok;
@@ -131,6 +144,7 @@ class FanStateService extends ChangeNotifier {
   Future<void> setPage(int page) async {
     if (page == _page) return;
     _page = page;
+    _clearRecognitionIfIdle();
     notifyListeners();
     if (_powerOn) await _pushModeAndWind();
   }
@@ -270,11 +284,10 @@ class FanStateService extends ChangeNotifier {
     _wasConnected = connected;
     if (!connected) {
       _wasPoweredOn = _powerOn;
-      if (_powerOn) {
-        // 끊김 = 양쪽 OFF 수렴 계약 (RPi도 풍속 정지 + 파킹).
-        _powerOn = false;
-        notifyListeners();
-      }
+      // 끊김 = 양쪽 OFF 수렴 계약 (RPi도 풍속 정지 + 파킹).
+      _powerOn = false;
+      _clearRecognitionIfIdle();
+      notifyListeners();
     }
   }
 
@@ -298,10 +311,16 @@ class FanStateService extends ChangeNotifier {
     _bodyStrengths[0x01] = 0;
     _bodyStrengths[0x02] = 1;
     _bodyStrengths[0x03] = 0;
-    recognized = false;
+    recognized = null;
     effectiveMode = null;
     _wasPoweredOn = false;
   }
+
+  /// 위젯 테스트에서 RPi Status notify를 흉내내기 위한 훅 —
+  /// 실제 수신 경로(파싱 + notifyListeners)를 그대로 탄다.
+  @visibleForTesting
+  void debugStatusNotify(List<int> value) =>
+      _onStatusNotify(Uint8List.fromList(value));
 
   @override
   void dispose() {

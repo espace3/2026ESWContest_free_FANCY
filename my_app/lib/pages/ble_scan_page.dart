@@ -135,9 +135,11 @@ class _BleScanPageState extends State<BleScanPage> {
       if (_scanning) await _toggleScan();
       _log('연결 시도: ${device.name ?? device.deviceId}');
       await _ble.connect(device);
-      _log('연결 성공 — 서비스 발견 중...');
-      final services = await UniversalBle.discoverServices(device.deviceId);
-      for (final s in services) {
+      // 서비스는 연결 절차에서 이미 발견했으므로 그 결과를 읽어 로그만 찍는다.
+      // 여기서 또 discoverServices를 부르면 안드로이드가 연결 직후 연달아
+      // 들어온 GATT 작업에 133으로 실패하는 일이 생긴다.
+      _log('연결 성공 — 발견된 서비스:');
+      for (final s in _ble.lastServices) {
         final mark = s.uuid.toLowerCase() == proto.serviceUuid ? ' ← ESW' : '';
         _log('서비스 ${s.uuid}$mark');
         for (final c in s.characteristics) {

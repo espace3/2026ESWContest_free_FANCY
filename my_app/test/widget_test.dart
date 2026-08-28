@@ -113,6 +113,70 @@ void main() {
     ]);
   });
 
+  /// 타겟 모드 화면까지 이동 (전원 ON → 오른쪽 페이지로 스와이프).
+  Future<void> goToTarget(WidgetTester tester) async {
+    await turnOn(tester);
+    await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+    await tester.pumpAndSettle();
+  }
+
+  List<SegmentedButton<int>> targetSelectors(WidgetTester tester) => tester
+      .widgetList<SegmentedButton<int>>(find.descendant(
+        of: find.byType(TargetModePage),
+        matching: find.byType(SegmentedButton<int>),
+      ))
+      .toList();
+
+  testWidgets('부위별 세기는 부위 모드가 꺼져 있어도 보이고 비활성이다', (tester) async {
+    await goToTarget(tester);
+
+    expect(find.text('머리'), findsOneWidget);
+    expect(find.text('상체'), findsOneWidget);
+    expect(find.text('하체'), findsOneWidget);
+
+    final selectors = targetSelectors(tester);
+    expect(selectors.length, 4); // 공용 1 + 부위 3
+    expect(selectors.first.onSelectionChanged, isNotNull); // 공용은 활성
+    for (final selector in selectors.skip(1)) {
+      expect(selector.onSelectionChanged, isNull); // 부위 행은 비활성
+    }
+  });
+
+  testWidgets('인식 상태 카드가 RPi 보고를 반영한다', (tester) async {
+    await goToTarget(tester);
+    expect(find.text('인식 대기 중'), findsOneWidget); // 보고 전(null)
+
+    // 실제 notify 경로로 주입 (ble_protocol.md §3.4 타입 0x02).
+    FanStateService.instance
+        .debugStatusNotify([proto.statusTypeRecognition, 0x01]);
+    await tester.pump();
+    expect(find.text('인식 중'), findsOneWidget);
+
+    FanStateService.instance
+        .debugStatusNotify([proto.statusTypeRecognition, 0x00]);
+    await tester.pump();
+    expect(find.text('대상 없음'), findsOneWidget);
+  });
+
+  testWidgets('부위 모드 중 유효 모드가 추적이면 이동 감지 배너가 뜬다', (tester) async {
+    await goToTarget(tester);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(find.text('이동 감지 — 추적 중'), findsNothing);
+
+    // RPi가 이동을 감지해 추적으로 내려감 (유효 모드 push 0x03).
+    FanStateService.instance
+        .debugStatusNotify([proto.statusTypeEffectiveMode, 0x02]);
+    await tester.pump();
+    expect(find.text('이동 감지 — 추적 중'), findsOneWidget);
+
+    // 다시 정지해 순찰로 복귀하면 배너가 사라진다.
+    FanStateService.instance
+        .debugStatusNotify([proto.statusTypeEffectiveMode, 0x03]);
+    await tester.pump();
+    expect(find.text('이동 감지 — 추적 중'), findsNothing);
+  });
+
   testWidgets('풍량 선택기에 정지 상태가 표시된다', (tester) async {
     await turnOn(tester);
 

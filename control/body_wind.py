@@ -53,9 +53,9 @@ class BodyPatrolScenario(FullBodyScenario):
 
     ── 그 밖의 차이 ────────────────────────────────────────────────────────
     allowed는 러너가 매 프레임 "세기 ≥1인 부위"로 갱신한다 — 순찰 중 앱이
-    세기를 0으로 내리면 다음 부위 선택부터 빠지고, 다시 올리면 (웨이포인트가
-    남아 있으므로) 즉시 경로에 복귀한다. 경로 길이가 변하면 순찰 인덱스가 한
-    부위를 건너뛰거나 반복할 수 있지만 한 사이클 안에서 정리된다.
+    세기를 0으로 내리거나 다시 올려도, 경로 변경 시 현재 부위를 보존하고
+    체류 타이머를 재설정한다. 웨이포인트가 아직 없는 부위를 새로 켜면
+    매핑 단계로 돌아간다.
 
     조준각을 벌리는 장치가 둘인데 역할이 다르다:
       aim_bias_norm  — 부위별 조준점을 옮긴다 (관측 쪽, __init__ 주석 참고).
@@ -68,6 +68,9 @@ class BodyPatrolScenario(FullBodyScenario):
                  remap_alpha: float = 0.3, **kwargs):
         super().__init__(*args, **kwargs)
         self.allowed: set[str] = {"head", "upper", "lower"}
+        # 앱의 부위 세기 변경으로 순찰 경로가 바뀔 때 현재 부위와 체류
+        # 타이머를 보정하기 위한 직전 경로.
+        self._last_route: list[str] | None = None
         # 부위별 세기 (러너가 매 프레임 갱신) — 체류 시간 판정에 쓴다.
         self.levels: dict[str, int] = {}
         # 매핑에서 부위가 안 보일 때 추정/진행으로 넘어가기까지의 시간 (s).
@@ -88,34 +91,47 @@ class BodyPatrolScenario(FullBodyScenario):
         self.aim_bias_norm = aim_bias_norm or {}
 
     def _route(self):
-        """순찰 경로 — 켜진(세기 ≥1) 부위 **개수**로 동작이 갈린다.
+        """켜진 부위에 따른 최소 순회 경로를 반환한다.
 
-          0개(전부 정지) → 상체 한 곳에 머문다. 바람은 없다.
-          1개            → 그 부위에 고정 조준 (움직이지 않는다).
-          2개 이상       → 전체 왕복 경로를 스윕한다. 꺼진 부위도 **지나가되**
-                           그 자리에서는 바람이 0이다 (body_wind_level).
+        0개(전부 정지)는 웨이포인트가 있는 한 곳에 머물고, 1개는 해당
+        부위에 고정 조준한다. 인접한 두 부위는 두 부위만 왕복한다.
+        머리+하체처럼 양 끝 부위가 선택된 경우에만 상체를 통과하는
+        전체 스윕을 사용한다.
 
-        꺼진 부위를 경로에서 빼지 않는 이유: 빼면 머리↔하체처럼 떨어진 두
-        지점을 건너뛰며 오가 동작이 어색하고, 세기를 바꿀 때마다 경로 길이가
-        변해 순찰 인덱스가 엉뚱한 부위로 튄다 (실기 2026-08-28). 대신 세기 0인
-        부위에서는 체류하지 않고 지나간다 (dwell_s 프로퍼티 참고).
-
-        PATROL_ORDER는 head→upper→lower→upper 왕복이라 상체가 두 번 들어 있다.
-        웨이포인트가 없는 부위가 빠지면 같은 부위를 연달아 체류하게 되므로
-        (head→upper→upper) 연속 중복은 접는다.
+        PATROL_ORDER는 head→upper→lower→upper 왕복이라 상체가 두 번
+        들어 있다. 경로를 만들 때 연속 중복은 제거한다.
         """
         on = [r for r in self.SCAN_ORDER
               if r in self.allowed and r in self.waypoints]
         if len(on) == 1:
-            return on                            # 한 부위 고정 조준
+            return on
         if len(on) >= 2:
-            full = [r for r in self.PATROL_ORDER if r in self.waypoints]
-            if len(set(full)) == 1:
-                return full[:1]
-            # 연속 중복 제거 (마지막↔처음 순환 포함) — head→upper→upper 방지.
-            return [r for i, r in enumerate(full) if r != full[i - 1]]
-        # 전부 정지 — 상체 한 곳에 머문다. 경로를 비워두면 부모의 patrol이
-        # "웨이포인트 없음 → 스캔 재시작"을 매 프레임 반복해 루프에 빠진다.
+            selected = set(on)
+
+            # 머리와 하체는 양 끝 부위이므로 상체를 통과하는 전체 스윕.
+            if {"head", "lower"} <= selected:
+                route = [r for r in self.PATROL_ORDER
+                         if r in self.waypoints]
+            else:
+                # 인접한 부위는 선택된 부위만 순회한다.
+                route = [r for r in self.PATROL_ORDER
+                         if r in selected]
+
+            # head→upper→upper 같은 연속 중복 제거.
+            cleaned = [r for i, r in enumerate(route)
+                       if i == 0 or r != route[i - 1]]
+
+            # step()은 경로를 순환하므로, 마지막 항목과 첫 항목이 같으면
+            # 다음 순환에서 같은 부위에 연속 체류하게 된다.
+            # upper→lower→upper는 upper→lower로 저장해야 다음 순환이
+            # lower→upper가 되어 정확히 왕복한다.
+            if len(cleaned) > 1 and cleaned[0] == cleaned[-1]:
+                cleaned.pop()
+
+            return cleaned
+
+        # 전부 정지 — 부모의 patrol이 "웨이포인트 없음 → 스캔 재시작"을
+        # 매 프레임 반복하지 않도록 웨이포인트가 있는 한 곳에 머문다.
         for region in ("upper", "head", "lower"):
             if region in self.waypoints:
                 return [region]
@@ -298,8 +314,31 @@ class BodyPatrolScenario(FullBodyScenario):
         # 남아, 부위를 켰는데 아무 반응이 없다 (실기 2026-08-28: 머리만 켠 뒤
         # 하체를 켜도 머리만 계속 조준, 사용자가 움직여 재매핑이 돌면 정상화).
         # 매핑은 보이면 다음 프레임에, 안 보이면 map_timeout_s 뒤 추정으로 채운다.
-        if self.state == "patrol" and self.allowed - self.waypoints.keys():
-            self._restart_scan()
+        if self.state == "patrol":
+            if self.allowed - self.waypoints.keys():
+                # 새로 켠 부위의 웨이포인트가 아직 없으면 매핑부터 한다.
+                self._restart_scan()
+                self._last_route = None
+            else:
+                new_route = self._route()
+                if new_route != self._last_route:
+                    # 경로가 바뀌어도 현재 체류 중인 부위가 새 경로에
+                    # 있으면 그 부위부터 이어간다. 없어진 경우에만 기존
+                    # index를 새 경로 범위 안으로 접는다.
+                    current_region = None
+                    if self._last_route:
+                        current_region = self._last_route[
+                            self._patrol_i % len(self._last_route)]
+
+                    if current_region in new_route:
+                        self._patrol_i = new_route.index(current_region)
+                    elif new_route:
+                        self._patrol_i %= len(new_route)
+
+                    # 새 부위가 추가되거나 현재 부위가 바뀐 시점부터
+                    # 해당 부위의 체류 시간을 다시 센다.
+                    self._dwell_until = None
+                    self._last_route = list(new_route)
         # 조준 부위는 step 전에 읽는다 — step이 다음 부위로 넘어갈 수 있어서,
         # 뒤에 읽으면 이번 목표각에 다음 부위의 구간이 걸린다.
         region = self.active_region()

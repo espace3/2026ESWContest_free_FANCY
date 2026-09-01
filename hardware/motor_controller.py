@@ -5,7 +5,7 @@ hardware/motor_controller.py
 control/control_signal_generator.py가 계산한 각도(degree)를 받아 실제로
 GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직을 넣지 말 것.
 핀 배정·드라이버(TMC2209)·마이크로스텝·램프 파라미터는 config.py의
-"pins"/"stepper"에 있다 (scripts/verify_motor.py로 실기 검증된 값).
+"pins"/"stepper"에 있다 (모터 단독 실기 검증을 마친 값).
 
 논블로킹 구조 — 메인 루프가 20~30fps로 새 목표를 던져도 막히지 않는다:
 
@@ -14,7 +14,7 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     버려진다.
 
   - 펄스는 lgpio tx_pwm으로 "청크"(재생 시간 _CHUNK_S 분량의 조각) 단위로
-    큐잉한다. verify_motor.py처럼 순항 전체를 버스트 하나로 보내면 끝날 때까지
+    큐잉한다. 순항 전체를 버스트 하나로 보내면 끝날 때까지
     새 목표를 반영할 방법이 없어서, 짧은 조각으로 나눠 보내고 조각 경계마다
     목표 변경을 확인하는 것이다. 한번 큐에 넣은 청크는 절대 취소하지 않는다
     (도중 취소하면 실제 송출된 스텝 수를 알 수 없어 위치 장부가 깨짐). 대신

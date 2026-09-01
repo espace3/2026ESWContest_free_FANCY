@@ -8,8 +8,8 @@ dict(장부 각도·부위 좌표), 출력은 팬/틸트 목표 각도(degree) �
 
 전제: 카메라가 팬·틸트 헤드에 함께 실려 움직인다 (2026-07-10 확정). 그래서 틸트도
 팬과 같은 피드백(상대 보정) 루프다 — 새 목표각 = 현재 장부각 + gain × 오차각,
-오차각은 FOV만으로 정해지고 거리에 의존하지 않는다 (scripts/verify_track_pan.py
-[피드백 원리] 참고).
+오차각은 FOV만으로 정해지고 거리에 의존하지 않는다
+(docs/tracking_feedback.md 참고).
 
 상태기계:
   scan     head→upper→lower 순서로 부위를 화면 중앙에 수렴시키고(오차 < converge_deg

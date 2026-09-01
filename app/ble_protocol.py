@@ -22,8 +22,8 @@ cv2 창은 추적 스레드가 직접 그리지 않는다 — HighGUI(GTK)는 �
 만든 _window_viewer 전용 스레드가 창을 전담한다. --web을 함께 켜면 같은
 프레임을 브라우저(http://<호스트>:8090/)로도 볼 수 있다.
 
-설치: verify_ble.py, verify_track_pan/tilt/pantilt.py의 설치 안내를 합친 것과 동일
-    (bluez_peripheral --pre, tflite-runtime, opencv-python 등).
+설치: 레포 루트의 README.md "설치" 절 참고
+    (requirements.txt + bluez_peripheral --pre).
 
 실행 (RPi 5, 레포 루트에서):
     python3 app/ble_protocol.py --axis pan
@@ -67,7 +67,7 @@ from app.tracking import (add_state_args, open_motor_from_args, run_pan_tracking
 from app.camera import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
-# ── 프로토콜 (ble_protocol.md / verify_ble.py와 일치해야 함) ──
+# ── 프로토콜 (docs/ble_protocol.md 와 일치해야 함) ──
 UUID_BASE = "14d7{:04x}-7197-49e5-a017-0b2f308120f0"
 SERVICE_UUID = UUID_BASE.format(0x0001)
 POWER_UUID = UUID_BASE.format(0x0002)
@@ -151,10 +151,9 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
         fov_v = fov_cfg["v"]
         sign = -1.0 if args.invert else 1.0
         aim_key = "upper" if args.region == "chest" else args.region
-        # run_tilt_tracking은 verify_track_tilt.py 원본 그대로 args.gain/args.deadzone을
-        # 틸트 이득/데드존으로 읽는다 (단독 스크립트 시절엔 축 접두사가 없었음).
-        # 이 스크립트의 인터페이스는 --gain-tilt/--deadzone-tilt이므로 여기서 옮겨
-        # 심는다 — app/tracking.py를 고치면 verify_track_tilt.py 동작이 바뀌기 때문.
+        # run_tilt_tracking은 args.gain/args.deadzone을 틸트 이득/데드존으로 읽는다
+        # (틸트 단독 스크립트에서 옮겨온 시그니처라 축 접두사가 없다).
+        # 여기 인터페이스는 --gain-tilt/--deadzone-tilt이므로 옮겨 심는다.
         args.gain = args.gain_tilt
         args.deadzone = args.deadzone_tilt
 

@@ -2,9 +2,8 @@
 app/tracking.py - 팬/틸트 닫힌 루프 공유 모듈
 (개발 이력상 tracking_core.py)
 
-verify_track_pan.py / verify_track_tilt.py / verify_track_pantilt.py가 각각
-독립적으로 갖고 있던 while-루프 본문과 헬퍼(chest_point/_DryMotor/_open_motor)를
-그대로 옮겨왔다. 계산/제어 로직은 원본에서 한 글자도 바꾸지 않았고, `while True`만
+팬 단독 / 틸트 단독 / 두 축 동시, 세 개의 축별 검증 스크립트가 각각 독립적으로
+갖고 있던 while-루프 본문과 헬퍼(chest_point/_DryMotor/_open_motor)를 모아둔 것이다. 계산/제어 로직은 원본에서 한 글자도 바꾸지 않았고, `while True`만
 `while not stop_event.is_set()`으로 바뀌었다 — 각 verify_track_*.py는 이 함수들을
 호출하도록 리팩터되어 있으며 `stop_event`를 아무도 set하지 않으므로 단독 실행 시
 동작은 기존과 100% 동일하다.
@@ -111,7 +110,7 @@ def open_motor_from_args(args):
 
 def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                       fov_h, sign, web_state=None) -> None:
-    """verify_track_pan.py의 루프 본문 (팬만 제어, 틸트는 0° 고정)."""
+    """팬 닫힌 루프 (팬만 제어, 틸트는 0° 고정) — docs/tracking_feedback.md."""
     from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
     from control.control_signal_generator import compute_pan_angle, apply_deadzone, clamp_angle
     from app.camera import _read_frame, draw_pose
@@ -221,7 +220,7 @@ def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
 
 def run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                        fov_v, sign, aim_key, web_state=None) -> None:
-    """verify_track_tilt.py의 루프 본문 (틸트만 제어, 팬은 0° 고정)."""
+    """틸트 닫힌 루프 (틸트만 제어, 팬은 0° 고정) — docs/tracking_feedback.md."""
     from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
     from vision.pose_tracker import PoseTracker
     from control.control_signal_generator import apply_deadzone, clamp_angle, compute_tilt_angle
@@ -336,7 +335,7 @@ def run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
 
 def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                           fov_h, fov_v, sign_pan, sign_tilt, web_state=None) -> None:
-    """verify_track_pantilt.py의 루프 본문 (팬+틸트 동시, 한 관측=한 명령)."""
+    """팬+틸트 동시 닫힌 루프 (한 관측 = 한 명령) — docs/tracking_feedback.md."""
     from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
     from vision.pose_tracker import PoseTracker
     from control.control_signal_generator import (apply_deadzone, clamp_angle,

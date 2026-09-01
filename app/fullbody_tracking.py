@@ -2,7 +2,7 @@
 app/fullbody_tracking.py - 팬+틸트 전신(머리→발) 추적 루프
 (개발 이력상 verify_fulltrack.py)
 
-verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라가 팬·틸트 헤드에 함께 실려 있다는
+축 단독 추적(app/tracking.py)의 다음 단계. 카메라가 팬·틸트 헤드에 함께 실려 있다는
 전제로 전신 시나리오를 검증한다. 이 파일도 계산 로직을 담지 않는다:
   - 시나리오 상태기계(스캔→순찰→재획득):  control/fullbody_scenario.py
   - 추정/선정/스무딩:  vision/pose_estimator, target_selector, pose_tracker
@@ -50,7 +50,6 @@ verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라
     남는 오차원은 탈조뿐이다 (docs/hardware_todo.md 호밍 항목).
 
 실기 검증 절차 (RPi 5, 레포 루트에서):
-    # 0) 틸트 방향/속도는 verify_track_tilt.py로 먼저 확정할 것 (--invert 필요 여부)
     python app/fullbody_tracking.py                        # 1) 스캔 수렴 → 순찰
     python app/fullbody_tracking.py --web --no-window      # SSH: 브라우저 확인
     python app/fullbody_tracking.py --dry-run --opencv     # 개발 PC, 모터 없이

@@ -206,6 +206,7 @@ scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
 | 문서 | 내용 |
 |---|---|
 | [`docs/ble_protocol.md`](docs/ble_protocol.md) | BLE UUID·바이트 형식·상태 동기화 계약 (RPi 구현 기준) |
+| [`docs/tracking_feedback.md`](docs/tracking_feedback.md) | 추적 제어 원리 — 왜 절대 조준이 아니라 피드백인지, 거리를 몰라도 되는 이유, 데드존을 각도에 거는 이유 |
 | [`docs/lgpio_patch.md`](docs/lgpio_patch.md) | 부하 시 모터 소음 문제 — 배제한 가설 8종, 원인, 채택한 대책 |
 | [`docs/angle_calibration.md`](docs/angle_calibration.md) | 각도 오차의 원인(기어비·백래시·탈조·원점)을 가르는 실험 순서와 보정식 |
 | [`docs/measurements/pulse_jitter.md`](docs/measurements/pulse_jitter.md) | 펄스 스레드 지터 실측표 — RT 승격 대책의 근거 |
@@ -255,5 +256,5 @@ scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
 | 모터 위치 정확도 | < 2° |
 
 목표에 영향을 주는 파이프라인 단계(추론·모터 이동·BLE 왕복)를 추가할 때는
-`verify_movenet.py`의 FPS 로깅 패턴(`fps_hist`, 초당 콘솔 로그)처럼 **측정 코드를
+`app/camera.py`의 FPS 로깅 패턴(`fps_hist`, 초당 콘솔 로그)처럼 **측정 코드를
 함께 넣습니다.** 주장이 아니라 코드로 잴 수 있어야 합니다.

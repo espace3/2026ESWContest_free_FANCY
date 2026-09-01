@@ -60,6 +60,10 @@ class _DryMotor:
         return True
     def move_to(self, pan_deg: float, tilt_deg: float) -> None:
         self._pan, self._tilt = pan_deg, tilt_deg
+    def stop(self) -> None:
+        # 실모터는 감속 정지 후 멈춘 자리가 새 위치가 되지만, 이 스텁은 move_to를
+        # '즉시 도달'로 가정하므로 이미 목표각에 있다 — 바꿀 상태가 없다.
+        ...
     def current_position(self) -> tuple[float, float]: return (self._pan, self._tilt)
     def wait_until_idle(self, timeout: float | None = None) -> bool: return True
     def close(self) -> None: ...

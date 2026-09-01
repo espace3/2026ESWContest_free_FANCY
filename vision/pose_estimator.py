@@ -53,7 +53,6 @@ class MoveNetMultiPoseDetector:
     # 목표(20fps)를 맞추기 위해 낮춰서 사용 중 (256 → 192 → 160 순으로 단계적으로
     # 낮춰가며 테스트) — 완전 컨볼루션 구조라 32의 배수면 동작은 하지만, 256 기준으로
     # 학습된 모델이라 특히 작게 잡히는 사람/먼 거리 키포인트 정확도가 떨어질 수 있음.
-    # mAP 재측정 필요.
     INPUT_SIZE = 160
     MAX_PEOPLE = 6
 
@@ -64,9 +63,9 @@ class MoveNetMultiPoseDetector:
     def __init__(
         self,
         model_path: str,
-        conf_thr: float = 0.25,        # app/camera.py --conf 기본값과 통일
-        min_person_score: float = 0.15,
-        num_threads: int = 3,          # Pi 5 기준 무난한 값 — FPS 튜닝 시 조정
+        conf_thr: float = 0.25,         # 부위 판별 threshold
+        min_person_score: float = 0.15, # 인물 판별 threshold
+        num_threads: int = 3,           # FPS 튜닝 후 선택
     ) -> None:
         try:
             from tflite_runtime.interpreter import Interpreter
@@ -115,6 +114,9 @@ class MoveNetMultiPoseDetector:
         h_orig, w_orig = frame_bgr.shape[:2]
 
         # ── 전처리: letterbox → s x s ────────────────────────────────────
+        # 정사각형으로 그냥 늘리면 16:9 프레임의 사람이 가로로 찌그러져
+        # 정확도가 떨어진다. 비율을 유지해 넣고 남는 공간을 검게 채운 뒤,
+        # 아래 후처리에서 그 패딩만큼 좌표를 되돌린다.
         scale = min(s / w_orig, s / h_orig)
         nw, nh = int(w_orig * scale), int(h_orig * scale)
         pad_x = (s - nw) // 2
@@ -178,8 +180,56 @@ class MoveNetMultiPoseDetector:
 
         return {
             "head": self._region_center(keypoints, HEAD_IDX) if head_visible else {"cx": 0.5, "cy": 0.5, "visible": False},
-            "upper": self._region_center(keypoints, UPPER_IDX) if upper_visible else {"cx": 0.5, "cy": 0.5, "visible": False},
+            "upper": self._upper_center(keypoints) if upper_visible else {"cx": 0.5, "cy": 0.5, "visible": False},
             "lower": self._region_center(keypoints, LOWER_IDX) if lower_visible else {"cx": 0.5, "cy": 0.5, "visible": False},
+        }
+
+    # 어깨만 보일 때 조준점을 내릴 배수 — 머리중점→어깨중점 벡터의 몇 배.
+    # 정자세에서 코↔어깨 세로거리 ≈19cm, 어깨→몸통중앙 ≈25cm 이므로 25/19 ≈ 1.3.
+    # 즉 엉덩이가 보일 때의 4점 평균과 같은 지점에 떨어진다.
+    _UPPER_EXTEND = 1.3
+
+    def _upper_center(self, kps: list) -> dict:
+        """상체 조준점. 엉덩이가 둘 다 보이면 기존대로 어깨+엉덩이 4점 평균이고,
+        엉덩이가 안 보이면 어깨 중점에서 **머리 반대 방향으로** 연장해 내린다.
+
+        [왜] _region_center는 보이는 점만 평균하므로, 엉덩이가 가려지면(앉은 자세,
+        책상) 중심이 어깨선 = 목/쇄골로 올라붙는다. 게다가 부위 모드의 조준 보정
+        (main.py --body-upper-ratio)은 "중심이 배꼽 근처"라는 전제로 조준을 더
+        위로 올리기 때문에, 두 오차가 같은 방향으로 겹쳐 목·얼굴을 겨눈다.
+        엉덩이가 깜빡이면 조준점이 어깨선↔몸통중앙을 프레임마다 오간다.
+
+        [단위] 오프셋을 정규화 좌표의 고정값으로 두면 안 된다 — 화면 속 사람
+        크기는 거리에 반비례해서(1m에서 어깨폭 0.162, 3m에서 0.054) 같은 값이
+        멀리서는 3배로 과해진다. 머리중점→어깨중점 벡터를 단위로 쓰면 그 길이가
+        거리에 같이 줄어 자동으로 상쇄되고, 방향까지 한 번에 얻어 몸이 기울거나
+        카메라가 롤 돼도 따라간다.
+
+        [한계] 고개를 숙이면 이 벡터가 짧아져 오프셋도 줄어든다 — 30° 숙임에서
+        약 7cm 위로 뜬다. 바람 조준 정밀도에서는 무시할 수준이라 감수한다.
+        """
+        hips = [i for i in (11, 12) if kps[i]["conf"] >= self._conf_thr]
+        if len(hips) == 2:
+            return self._region_center(kps, UPPER_IDX)
+
+        sh = self._region_center(kps, [5, 6])
+        if not sh["visible"]:
+            return self._region_center(kps, UPPER_IDX)   # 엉덩이만 보이는 드문 경우
+
+        head = self._region_center(kps, HEAD_IDX)
+        if head["visible"]:
+            dx = (sh["cx"] - head["cx"]) * self._UPPER_EXTEND
+            dy = (sh["cy"] - head["cy"]) * self._UPPER_EXTEND
+        else:
+            # 머리까지 없으면 방향을 정할 수 없다 — 어깨 폭을 크기로, 화면 아래를
+            # 방향으로 쓴다 (뒤돌아선 경우 등, 실기에서는 드묾).
+            lx, rx = kps[5]["x"], kps[6]["x"]
+            ly, ry = kps[5]["y"], kps[6]["y"]
+            dx, dy = 0.0, ((lx - rx) ** 2 + (ly - ry) ** 2) ** 0.5 * 0.62
+        return {
+            "cx": max(0.0, min(1.0, sh["cx"] + dx)),
+            "cy": max(0.0, min(1.0, sh["cy"] + dy)),
+            "visible": True,
         }
 
     def _region_center(self, kps: list, idxs: list[int]) -> dict:

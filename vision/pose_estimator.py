@@ -63,10 +63,14 @@ class MoveNetMultiPoseDetector:
     def __init__(
         self,
         model_path: str,
-        conf_thr: float = 0.25,         # 부위 판별 threshold
-        min_person_score: float = 0.15, # 인물 판별 threshold
-        num_threads: int = 3,           # FPS 튜닝 후 선택
+        *,
+        conf_thr: float,          # 관절 판별 threshold
+        min_person_score: float,  # 인물 판별 threshold
+        num_threads: int,         # TFLite 워커 스레드 수
     ) -> None:
+        # 기본값을 두지 않는다 — 값의 출처는 config "tracking" 하나뿐이고,
+        # 여기 사본을 남기면 config를 고쳐도 조용히 옛 숫자가 쓰일 수 있다.
+        # 안 넘기면 TypeError로 즉시 드러난다.
         try:
             from tflite_runtime.interpreter import Interpreter
         except ImportError:

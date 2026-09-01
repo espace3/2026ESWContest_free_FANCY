@@ -184,11 +184,6 @@ class MoveNetMultiPoseDetector:
             "lower": self._region_center(keypoints, LOWER_IDX) if lower_visible else {"cx": 0.5, "cy": 0.5, "visible": False},
         }
 
-    # 어깨만 보일 때 조준점을 내릴 배수 — 머리중점→어깨중점 벡터의 몇 배.
-    # 정자세에서 코↔어깨 세로거리 ≈19cm, 어깨→몸통중앙 ≈25cm 이므로 25/19 ≈ 1.3.
-    # 즉 엉덩이가 보일 때의 4점 평균과 같은 지점에 떨어진다.
-    _UPPER_EXTEND = 1.3
-
     def _upper_center(self, kps: list) -> dict:
         """상체 조준점. 엉덩이가 둘 다 보이면 기존대로 어깨+엉덩이 4점 평균이고,
         엉덩이가 안 보이면 어깨 중점에서 **머리 반대 방향으로** 연장해 내린다.
@@ -218,8 +213,8 @@ class MoveNetMultiPoseDetector:
 
         head = self._region_center(kps, HEAD_IDX)
         if head["visible"]:
-            dx = (sh["cx"] - head["cx"]) * self._UPPER_EXTEND
-            dy = (sh["cy"] - head["cy"]) * self._UPPER_EXTEND
+            dx = (sh["cx"] - head["cx"])
+            dy = (sh["cy"] - head["cy"])
         else:
             # 머리까지 없으면 방향을 정할 수 없다 — 어깨 폭을 크기로, 화면 아래를
             # 방향으로 쓴다 (뒤돌아선 경우 등, 실기에서는 드묾).

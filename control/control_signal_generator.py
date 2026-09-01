@@ -1,15 +1,15 @@
 """
 control/control_signal_generator.py
 
-카메라 좌표계 → 모터 제어값 변환, 거리 추정 — 순수 계산 모듈.
+카메라 좌표계 → 모터 제어값 변환 — 순수 계산 모듈.
 GPIO/UART/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
-입력은 vision/ 모듈이 만든 키포인트·정규화 좌표, 출력은 각도(degree)·거리(m)
-같은 순수 값입니다. 실제로 모터를 움직이는 코드는
+입력은 vision/ 모듈이 만든 키포인트·정규화 좌표, 출력은 각도(degree) 같은
+순수 값입니다. 실제로 모터를 움직이는 코드는
 hardware/motor_controller.py 쪽 몫입니다.
 
 주의: 선풍기 풍속(바람 세기)은 이 모듈이 다루는 대상이 아닙니다 — 풍속은
 부위(머리/상체/하체)별로 사용자가 앱에서 BLE로 직접 지정하는 값이라 카메라
-거리 추정과 무관합니다 (그쪽은 hardware/relay_controller.py + BLE 서버가
+쪽과 무관합니다 (그쪽은 hardware/relay_controller.py + BLE 서버가
 담당).
 """
 
@@ -55,30 +55,3 @@ def apply_deadzone(new_angle_deg: float, last_sent_angle_deg: float, deadzone_de
     if abs(new_angle_deg - last_sent_angle_deg) <= deadzone_deg:
         return last_sent_angle_deg
     return new_angle_deg
-
-
-def estimate_distance_m(
-    shoulder_px_dist: float,
-    ref_shoulder_cm: float,
-    focal_px: float,
-    min_m: float | None = None,
-    max_m: float | None = None,
-) -> float | None:
-    """양 어깨 키포인트 간 픽셀 거리로 카메라-사람 간 거리(m)를 추정한다 (핀홀 카메라 모델).
-
-    distance_cm = ref_shoulder_cm * focal_px / shoulder_px_dist
-
-    shoulder_px_dist가 0 이하면 (어깨가 감지되지 않은 경우) None을 반환한다.
-
-    min_m/max_m을 주면 결과를 그 범위로 클램프한다 — 키포인트 잡음으로 어깨
-    픽셀 거리가 순간적으로 튀면 물리적으로 말이 안 되는 거리(수십 m / 수 cm)가
-    나올 수 있어서, 유효 사용 범위(config.py distance.min_m/max_m)로 잘라낸다.
-    """
-    if shoulder_px_dist <= 0:
-        return None
-    distance_m = ref_shoulder_cm * focal_px / shoulder_px_dist / 100.0
-    if min_m is not None and distance_m < min_m:
-        return min_m
-    if max_m is not None and distance_m > max_m:
-        return max_m
-    return distance_m

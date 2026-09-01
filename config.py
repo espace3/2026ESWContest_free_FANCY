@@ -6,10 +6,9 @@ target_fan / config.py
 docs/hardware_todo.md 에 모읍니다.
 """
 
-import math
 from pathlib import Path
 
-# 캡처 해상도 — 아래 fov/focal_px가 이 값 기준으로 유도되므로 여기서만 수정할 것.
+# 캡처 해상도.
 _CAM_W, _CAM_H = 640, 360
 
 # ── 화각 (Pi Camera Module 3 Wide NoIR / IMX708) ─────────────────────────────
@@ -110,17 +109,5 @@ CFG: dict = {
     "limits": {
         "pan":  {"min": -200.0, "max": 200.0},
         "tilt": {"min": -25.0,  "max": 15.0},
-    },
-
-    # ── 거리 추정 (어깨 너비 기반 — control/control_signal_generator.py) ─────
-    "distance": {
-        "ref_shoulder_cm": 40,   # 성인 평균 어깨 너비 (cm)
-        # 초점거리(픽셀) — 수평 FOV에서 유도. 어깨 너비는 화면상 수평 거리라서
-        # 수평 기준을 쓴다. 해상도/FOV를 바꾸면 자동으로 따라온다.
-        "focal_px": (_CAM_W / 2) / math.tan(math.radians(_FOV_H_DEG / 2)),  # ≈ 259
-        # estimate_distance_m(min_m=…, max_m=…)에 넘겨서 키포인트 잡음으로 인한
-        # 비정상 추정값(초근거리/초원거리)을 잘라내는 용도
-        "min_m": 0.3,
-        "max_m": 5.0,
     },
 }

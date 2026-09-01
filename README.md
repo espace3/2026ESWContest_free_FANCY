@@ -44,7 +44,7 @@ python3 main.py --axis pan --dry-run --opencv
                         │             → 대상자 1인 선정 → EMA 스무딩    │
                         │                     │                        │
                         │  control/   좌표 → 팬/틸트 각도, 데드존,      │
-                        │             거리 추정, 부위 순찰 시나리오      │
+                        │             부위 순찰 시나리오                 │
                         │                     │                        │
                         │  hardware/  ────────┴──────┐                 │
                         └───────│─────────────────│──┘                 │
@@ -64,8 +64,8 @@ python3 main.py --axis pan --dry-run --opencv
 | **타겟** | 사용자의 가슴(어깨 중점)을 화면 중앙에 붙잡는 닫힌 루프 추적 |
 | **타겟-부위** | 머리 → 상체 → 하체를 순찰하며 부위별로 설정된 풍속을 적용.<br>사용자가 이동하면 자동으로 추적으로 폴백했다가, 잠잠해지면 순찰 재개 |
 
-풍속은 **앱이 정하는 값**이고, 거리 추정으로 바뀌는 것은 **모터 회전 속도**입니다
-(두 경로는 서로 독립입니다 — 자세한 계약은 [`docs/ble_protocol.md`](docs/ble_protocol.md)).
+풍속은 카메라가 아니라 **앱이 정하는 값**입니다 — 부위별 세기를 사용자가 BLE로
+직접 지정하고, RPi는 어디를 겨눌지만 정합니다 (계약: [`docs/ble_protocol.md`](docs/ble_protocol.md)).
 
 ---
 
@@ -137,7 +137,7 @@ vision/                   순수 계산 — GPIO/BlueZ import 금지, 프레임/
                             대상 교체·재획득 시에는 EMA 없이 즉시 점프(허공을 훑지 않도록)
 
 control/                  순수 계산 — GPIO/BlueZ import 금지
-  control_signal_generator.py  좌표 → 팬/틸트 각도, 데드존, 거리 추정
+  control_signal_generator.py  좌표 → 팬/틸트 각도, 데드존, 소프트 리밋
   fullbody_scenario.py         전신(머리→발) 시나리오 상태기계:
                                스캔 → 웨이포인트 순찰 → 이동 재획득, 가림·틸트 리밋 처리
   body_wind.py                 부위 모드 보조: 순찰 경로 필터(세기 0인 부위 제외),

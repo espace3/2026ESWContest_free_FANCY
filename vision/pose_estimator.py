@@ -216,8 +216,7 @@ class MoveNetMultiPoseDetector:
             dx = (sh["cx"] - head["cx"])
             dy = (sh["cy"] - head["cy"])
         else:
-            # 머리까지 없으면 방향을 정할 수 없다 — 어깨 폭을 크기로, 화면 아래를
-            # 방향으로 쓴다 (뒤돌아선 경우 등, 실기에서는 드묾).
+            # 머리까지 없으면 방향을 정할 수 없다 — 어깨 폭을 크기로, 화면 아래를 벙향으로
             lx, rx = kps[5]["x"], kps[6]["x"]
             ly, ry = kps[5]["y"], kps[6]["y"]
             dx, dy = 0.0, ((lx - rx) ** 2 + (ly - ry) ** 2) ** 0.5 * 0.62

@@ -211,7 +211,7 @@ def _track_loop(args, detector, cam, backend, tracker, scenario, mc,
         for ev in scenario.events:
             print(f"\n[track] {ev}")
 
-        pan_g = apply_deadzone(pan_t, last_pan, args.deadzone)
+        pan_g = apply_deadzone(pan_t, last_pan, args.deadzone_pan)
         tilt_g = apply_deadzone(tilt_t, last_tilt, args.deadzone_tilt)
         if (pan_g, tilt_g) != (last_pan, last_tilt):
             mc.move_to(pan_g, tilt_g)
@@ -255,16 +255,16 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
     # ── 제어 (시작값은 임의 — 실기 튜닝) ─────────────────────────────────────
-    p.add_argument("--gain", type=float, default=0.3, help="팬 비례 게인")
+    p.add_argument("--gain-pan", type=float, default=0.3, help="팬 비례 게인")
     p.add_argument("--gain-tilt", type=float, default=0.25, help="틸트 비례 게인")
-    p.add_argument("--deadzone", type=float, default=1.0, help="팬 데드존 (°)")
+    p.add_argument("--deadzone-pan", type=float, default=1.0, help="팬 데드존 (°)")
     p.add_argument("--deadzone-tilt", type=float, default=0.5, help="틸트 데드존 (°)")
     p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
     p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"],
                    help="틸트 소프트 리밋 하한 ° (기본 config limits — 상한 +15°는 기구 파손 한계, 넘기지 말 것)")
     p.add_argument("--tilt-max", type=float, default=lim["tilt"]["max"])
-    p.add_argument("--invert", action="store_true", help="팬 오차 부호 반전")
+    p.add_argument("--invert-pan", action="store_true", help="팬 오차 부호 반전")
     p.add_argument("--invert-tilt", action="store_true",
                    help="틸트 오차 부호 반전 (dir_for_positive 미검증 — 첫 실기에서 확인)")
     # ── 시나리오 (control/fullbody_scenario.py 파라미터) ─────────────────────
@@ -316,8 +316,8 @@ def main() -> None:
     scenario = FullBodyScenario(
         _fov["h"], _fov["v"],
         args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
-        gain=args.gain, gain_tilt=args.gain_tilt,
-        invert_pan=args.invert, invert_tilt=args.invert_tilt,
+        gain=args.gain_pan, gain_tilt=args.gain_tilt,
+        invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
         converge_deg=args.converge, converge_frames=args.converge_frames,
         dwell_s=args.dwell, trim_alpha=args.trim_alpha,
         move_thr_deg=args.move_thr, rescan_thr_deg=args.rescan_thr,
@@ -334,8 +334,8 @@ def main() -> None:
         print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
 
     print("\n[fullbody] 전신 추적 시작 — 카메라가 팬·틸트 헤드에 함께 실린 상태를 가정합니다.")
-    print(f"  gain={args.gain}/{args.gain_tilt}  deadzone={args.deadzone}/{args.deadzone_tilt}°  "
-          f"tilt=[{args.tilt_min:g},{args.tilt_max:g}]°  invert={args.invert}/{args.invert_tilt}")
+    print(f"  gain={args.gain_pan}/{args.gain_tilt}  deadzone={args.deadzone_pan}/{args.deadzone_tilt}°  "
+          f"tilt=[{args.tilt_min:g},{args.tilt_max:g}]°  invert={args.invert_pan}/{args.invert_tilt}")
 
     motor_cm = open_motor_from_args(args)
     try:

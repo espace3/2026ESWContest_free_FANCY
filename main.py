@@ -43,7 +43,7 @@ app/ble_service.py와의 차이만 기록합니다 — 카메라 세션/창 스�
        이동 감지 우선순위: 시나리오 자체 이동 감지(recenter, --body-move-thr)는
          게이트(--body-exit-deg)보다 둔하게 둔다 — recenter가 먼저 걸리면 게이트
          창이 비워져(비 patrol) 폴백이 안 나오고, 작은 흔들림에도 순찰이 자주
-         끊긴다 (실기 2026-08-27). 미세 흔들림은 --body-deadzone으로 억제한다.
+         끊긴다 (실기 2026-08-27). 미세 흔들림은 --body-deadzone-pan/-tilt로 억제한다.
        조준각과 거리: 부위 조준각은 관측에서 바로 나오므로(순수 각도)
          거리 보정이 이미 되어 있다. 우리가 더하는 보정(머리를 위로,
          부위 간 최소 간격)만 고정 각도로 두면 거리에 따라 어긋나므로
@@ -183,8 +183,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
     (body_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
     시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자 위치·거리가
     달라졌을 수 있어서인데, 직접 매핑이라 다시 잡는 비용이 한 프레임이다.
-    gains=(pan, tilt)는 main에서 미리 캡처한 값 — v1 _make_runner가 --axis tilt
-    에서 args.gain을 덮어쓰기 때문에 args를 런타임에 읽으면 안 된다.
+    gains=(pan, tilt)는 main에서 미리 캡처한 값을 그대로 받는다.
     """
     fov = CFG["fov"]
     fov_h, fov_v = fov["h"], fov["v"]
@@ -192,9 +191,9 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
     # 재조준·탐색은 부모가 수렴 판정으로 진행을 막으므로, 그 구간에서만
     # 데드존을 gain x converge_deg 아래로 좁힌다 (순찰은 시간 슬롯이라
     # 도착 판정이 없어 사용자 데드존을 그대로 써도 갇히지 않는다).
-    conv_dz_pan = min(args.body_deadzone, 0.5 * gain_pan * args.body_converge)
+    conv_dz_pan = min(args.body_deadzone_pan, 0.5 * gain_pan * args.body_converge)
     conv_dz_tilt = min(args.body_deadzone_tilt, 0.5 * gain_tilt * args.body_converge)
-    sign_pan = -1.0 if args.invert else 1.0
+    sign_pan = -1.0 if args.invert_pan else 1.0
     sign_tilt = -1.0 if args.invert_tilt else 1.0
 
     def _region_levels():
@@ -206,7 +205,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         scenario = BodyPatrolScenario(
             fov_h, fov_v, args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
             gain=gain_pan, gain_tilt=gain_tilt,
-            invert_pan=args.invert, invert_tilt=args.invert_tilt,
+            invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
             dwell_s=args.body_dwell,
             converge_deg=args.body_converge,
             # 스캔은 한 프레임 직접 매핑으로 대체됐다 — 부모의 반복 수렴
@@ -320,7 +319,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 # 부모가 여전히 수렴으로 판정하므로 그때만 좁힌다.
                 converging = scenario.state in ("recenter", "search")
                 pan_g = apply_deadzone(pan_t, last_pan,
-                                       conv_dz_pan if converging else args.body_deadzone)
+                                       conv_dz_pan if converging else args.body_deadzone_pan)
                 tilt_g = apply_deadzone(tilt_t, last_tilt,
                                         conv_dz_tilt if converging else args.body_deadzone_tilt)
                 if not stop_event.is_set() and (pan_g, tilt_g) != (last_pan, last_tilt):
@@ -617,9 +616,9 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
     # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰임 — verify_track_*.py 참고) ────
-    p.add_argument("--gain", type=float, default=0.3)
+    p.add_argument("--gain-pan", type=float, default=0.3)
     p.add_argument("--gain-tilt", type=float, default=0.2)
-    p.add_argument("--deadzone", type=float, default=1.0)
+    p.add_argument("--deadzone-pan", type=float, default=1.0)
     p.add_argument("--deadzone-tilt", type=float, default=0.5)
     p.add_argument("--target-cx", type=float, default=0.5)
     p.add_argument("--target-cy", type=float, default=0.5)
@@ -629,7 +628,7 @@ def main() -> None:
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
     p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"])
     p.add_argument("--tilt-max", type=float, default=lim["tilt"]["max"])
-    p.add_argument("--invert", action="store_true")
+    p.add_argument("--invert-pan", action="store_true")
     p.add_argument("--invert-tilt", action="store_true")
     p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
                    help="--axis tilt 전용 조준 부위")
@@ -670,7 +669,7 @@ def main() -> None:
                    help="시나리오 재조준 트리거 가슴 오차 (° — 게이트보다 크게)")
     p.add_argument("--body-rescan-thr", type=float, default=30.0,
                    help="재조준 후 전신 재스캔 판정 이동량 (°)")
-    p.add_argument("--body-deadzone", type=float, default=2.0,
+    p.add_argument("--body-deadzone-pan", type=float, default=2.0,
                    help="팬 데드존 (° — 포즈 잡음이 모터로 새는 것 차단)")
     p.add_argument("--body-deadzone-tilt", type=float, default=1.0,
                    help="틸트 데드존 (°)")
@@ -722,7 +721,7 @@ def main() -> None:
             or args.body_still_s <= 0 or args.body_still_deg <= 0
             or args.body_spread_ratio < 0 or args.body_tilt_rate <= 0
             or args.body_move_thr <= 0 or args.body_rescan_thr <= 0
-            or args.body_deadzone <= 0 or args.body_deadzone_tilt <= 0
+            or args.body_deadzone_pan <= 0 or args.body_deadzone_tilt <= 0
 
             or args.body_converge <= 0 or args.body_map_timeout <= 0):
         print("[ERROR] --body-* 인자 범위가 잘못됐습니다 (help 참고)")
@@ -769,9 +768,7 @@ def main() -> None:
                 fan_cm = FanRelay(CFG, handle=mc.h)  # gpiochip 핸들 공유 (v2 docstring 4)
 
             with fan_cm as fan:  # mc보다 먼저 닫힘 — 공유 핸들이 살아있을 때 전부 오픈
-                # v1 _make_runner가 --axis tilt에서 args.gain을 덮어쓰므로
-                # 부위 러너용 게인은 그 전에 캡처한다 (_make_body_runner 참고).
-                body_gains = (args.gain, args.gain_tilt)
+                body_gains = (args.gain_pan, args.gain_tilt)
                 # 일반 타겟 모드(0x02)도 인식 상태를 보고하도록 디텍터를 감싼다.
                 reporting_detector = _ReportingDetector(detector)
                 track_fn = _make_runner(args.axis, reporting_detector, tracker,

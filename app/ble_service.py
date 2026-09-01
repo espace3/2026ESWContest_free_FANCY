@@ -399,9 +399,9 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
     # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰임 — verify_track_*.py 참고) ────
-    p.add_argument("--gain", type=float, default=0.3)
+    p.add_argument("--gain-pan", type=float, default=0.3)
     p.add_argument("--gain-tilt", type=float, default=0.2)
-    p.add_argument("--deadzone", type=float, default=1.0)
+    p.add_argument("--deadzone-pan", type=float, default=1.0)
     p.add_argument("--deadzone-tilt", type=float, default=0.5)
     p.add_argument("--target-cx", type=float, default=0.5)
     p.add_argument("--target-cy", type=float, default=0.5)
@@ -411,7 +411,7 @@ def main() -> None:
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
     p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"])
     p.add_argument("--tilt-max", type=float, default=lim["tilt"]["max"])
-    p.add_argument("--invert", action="store_true")
+    p.add_argument("--invert-pan", action="store_true")
     p.add_argument("--invert-tilt", action="store_true")
     p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
                    help="--axis tilt 전용 조준 부위")

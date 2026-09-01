@@ -166,9 +166,9 @@ def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                 lost = False
             err_cx = chest_s["cx"] - (args.target_cx - 0.5)
             err_deg = sign * compute_pan_angle(err_cx, fov_h)
-            raw_target = cur_pan + args.gain * err_deg
+            raw_target = cur_pan + args.gain_pan * err_deg
             raw_target = clamp_angle(raw_target, -args.limit, args.limit)
-            gated = apply_deadzone(raw_target, last_sent, args.deadzone)
+            gated = apply_deadzone(raw_target, last_sent, args.deadzone_pan)
             if gated != last_sent:
                 mc.move_to(gated, 0.0)
                 last_sent = gated
@@ -278,10 +278,10 @@ def run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                 lost = False
             err_cy = aim["cy"] - (args.target_cy - 0.5)
             err_deg = sign * compute_tilt_angle(err_cy, fov_v)
-            raw_target = clamp_angle(cur_tilt + args.gain * err_deg,
+            raw_target = clamp_angle(cur_tilt + args.gain_tilt * err_deg,
                                      args.tilt_min, args.tilt_max)
             at_limit = raw_target in (args.tilt_min, args.tilt_max)
-            gated = apply_deadzone(raw_target, last_sent, args.deadzone)
+            gated = apply_deadzone(raw_target, last_sent, args.deadzone_tilt)
             if gated != last_sent:
                 mc.move_to(0.0, gated)
                 last_sent = gated
@@ -389,9 +389,9 @@ def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                 lost = False
             ep = sign_pan * compute_pan_angle(chest["cx"] - (args.target_cx - 0.5), fov_h)
             et = sign_tilt * compute_tilt_angle(chest["cy"] - (args.target_cy - 0.5), fov_v)
-            pan_t = clamp_angle(cur_pan + args.gain * ep, args.pan_min, args.pan_max)
+            pan_t = clamp_angle(cur_pan + args.gain_pan * ep, args.pan_min, args.pan_max)
             tilt_t = clamp_angle(cur_tilt + args.gain_tilt * et, args.tilt_min, args.tilt_max)
-            pan_g = apply_deadzone(pan_t, last_pan, args.deadzone)
+            pan_g = apply_deadzone(pan_t, last_pan, args.deadzone_pan)
             tilt_g = apply_deadzone(tilt_t, last_tilt, args.deadzone_tilt)
             if (pan_g, tilt_g) != (last_pan, last_tilt):
                 mc.move_to(pan_g, tilt_g)

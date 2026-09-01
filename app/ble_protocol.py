@@ -32,7 +32,7 @@ cv2 창은 추적 스레드가 직접 그리지 않는다 — HighGUI(GTK)는 �
     python app/ble_protocol.py --axis pan --dry-run --opencv   # 개발 PC, 모터/BLE 없이 파이프라인만
 
 축별 튜닝 인자는 verify_track_pan/tilt/pantilt.py와 이름이 같다
-(--gain/--deadzone/--target-cx는 pan·pantilt, --gain-tilt/--deadzone-tilt/
+(--gain-pan/--deadzone-pan/--target-cx는 pan·pantilt, --gain-tilt/--deadzone-tilt/
 --target-cy/--tilt-min/--tilt-max는 tilt·pantilt, --region은 tilt 전용,
 --limit은 pan 전용, --pan-min/--pan-max는 pantilt 전용). 고르지 않은 축의
 인자는 무시된다 — 정확한 의미는 각 verify_track_*.py 참고.
@@ -135,7 +135,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
 
     if axis == "pan":
         fov_h = fov_cfg["h"]
-        sign = -1.0 if args.invert else 1.0
+        sign = -1.0 if args.invert_pan else 1.0
 
         def _run(stop_event):
             cam, backend = _open_cam()
@@ -149,13 +149,11 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
 
     if axis == "tilt":
         fov_v = fov_cfg["v"]
-        sign = -1.0 if args.invert else 1.0
+        # ⚠ --axis tilt 인데 팬 쪽 반전 플래그를 읽는다. 축 이름을 붙이기 전부터
+        #   이랬고(단독 스크립트 시절 --invert 하나뿐이었다), 바꾸면 실기에서 틸트
+        #   방향이 뒤집힐 수 있어 동작을 그대로 뒀다. 정리하려면 실기 확인 필요.
+        sign = -1.0 if args.invert_pan else 1.0
         aim_key = "upper" if args.region == "chest" else args.region
-        # run_tilt_tracking은 args.gain/args.deadzone을 틸트 이득/데드존으로 읽는다
-        # (틸트 단독 스크립트에서 옮겨온 시그니처라 축 접두사가 없다).
-        # 여기 인터페이스는 --gain-tilt/--deadzone-tilt이므로 옮겨 심는다.
-        args.gain = args.gain_tilt
-        args.deadzone = args.deadzone_tilt
 
         def _run(stop_event):
             cam, backend = _open_cam()
@@ -168,7 +166,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
         return _run
 
     fov_h, fov_v = fov_cfg["h"], fov_cfg["v"]
-    sign_pan = -1.0 if args.invert else 1.0
+    sign_pan = -1.0 if args.invert_pan else 1.0
     sign_tilt = -1.0 if args.invert_tilt else 1.0
 
     def _run(stop_event):
@@ -349,9 +347,9 @@ def main() -> None:
     p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
     # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰임 — verify_track_*.py 참고) ────
-    p.add_argument("--gain", type=float, default=0.3)
+    p.add_argument("--gain-pan", type=float, default=0.3)
     p.add_argument("--gain-tilt", type=float, default=0.2)
-    p.add_argument("--deadzone", type=float, default=1.0)
+    p.add_argument("--deadzone-pan", type=float, default=1.0)
     p.add_argument("--deadzone-tilt", type=float, default=0.5)
     p.add_argument("--target-cx", type=float, default=0.5)
     p.add_argument("--target-cy", type=float, default=0.5)
@@ -361,7 +359,7 @@ def main() -> None:
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
     p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"])
     p.add_argument("--tilt-max", type=float, default=lim["tilt"]["max"])
-    p.add_argument("--invert", action="store_true")
+    p.add_argument("--invert-pan", action="store_true")
     p.add_argument("--invert-tilt", action="store_true")
     p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
                    help="--axis tilt 전용 조준 부위")

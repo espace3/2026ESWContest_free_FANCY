@@ -36,7 +36,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
-from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
+from vision.target_selector import (select_target, person_center, DEFAULT_MATCH_RADIUS,
+                                    _bbox_from_keypoints)
 from vision.pose_tracker import PoseTracker
 
 # ── 색상 ─────────────────────────────────────────────────────────────────────
@@ -47,6 +48,7 @@ C_WHITE = (255, 255, 255)
 C_GRAY = (160, 160, 160)
 C_PANEL = (30, 30, 30)
 C_RED = (0, 50, 220)
+C_MAGENTA = (200, 0, 200)
 _PANEL_W = 340
 
 REGION_COLOR = {"head": (0, 50, 220), "upper": (0, 200, 60), "lower": (220, 80, 0)}
@@ -135,6 +137,27 @@ def draw_pose(frame: np.ndarray, people: list[dict], selected_idx: int | None) -
             if kp["conf"] >= conf_thr:
                 cx, cy = int(kp["x"] * w), int(kp["y"] * h)
                 cv2.circle(vis, (cx, cy), pt_radius, pt_color, -1)
+
+        # bbox 두 종류를 겹쳐 그린다 (차이 확인용)
+        #   시안  = 모델이 예측한 bbox (person["model_bbox"])
+        #   마젠타 = select_target()이 실제로 쓰는 bbox — conf 넘긴 키포인트의 min/max
+        # 가려짐·conf_thr에 따라 마젠타만 줄어드는 것을 눈으로 볼 수 있다.
+        mb = person.get("model_bbox")
+        if mb is not None:
+            x0, y0, x1, y1 = mb
+            cv2.rectangle(vis, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)),
+                          C_CYAN, 2 if is_target else 1)
+        kb = _bbox_from_keypoints(kps, conf_thr)
+        if kb is not None:
+            x0, y0, x1, y1 = kb
+            cv2.rectangle(vis, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)),
+                          C_MAGENTA, 2 if is_target else 1)
+            if is_target:
+                area_kb = (x1 - x0) * (y1 - y0)
+                area_mb = ((mb[2] - mb[0]) * (mb[3] - mb[1])) if mb is not None else 0.0
+                cv2.putText(vis, f"kp {area_kb:.3f} / model {area_mb:.3f}",
+                            (int(x0 * w), max(14, int(y0 * h) - 6)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_MAGENTA, 2)
 
         # 부위(머리/상체/하체) 중심 표시는 실제 추적 대상 1인에게만
         if is_target:

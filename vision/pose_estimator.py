@@ -107,6 +107,8 @@ class MoveNetMultiPoseDetector:
           people: list of {
               keypoints: list of {x,y,conf}  (정규화 좌표 [0,1], 원본 프레임 기준)
               score:     float               (인물 전체 검출 점수)
+              model_bbox: (x_min,y_min,x_max,y_max)  모델이 예측한 bbox(정규화).
+                         선정/조준에는 쓰지 않는다 — 비교·시각화용.
               regions:   {head, upper, lower} → {cx, cy, visible} (정규화)
           }
         """
@@ -158,9 +160,24 @@ class MoveNetMultiPoseDetector:
                     "conf": float(kc),
                 })
 
+            # 모델이 직접 예측한 bbox — 키포인트와 같은 letterbox 좌표계라
+            # 같은 역변환을 거친다. 조준/선정에는 쓰지 않고 비교·시각화용이며,
+            # 키포인트와 달리 [0,1] 클램프를 하지 않는다(프레임 밖으로 넘어가는
+            # 성질 자체가 코드 bbox와의 차이라 보이게 남긴다).
+            ymin, xmin, ymax, xmax = row[self._KP_BLOCK_LEN:self._SCORE_IDX]
+            model_bbox = tuple(
+                v for v in (
+                    ((float(xmin) * s - pad_x) / scale) / w_orig,
+                    ((float(ymin) * s - pad_y) / scale) / h_orig,
+                    ((float(xmax) * s - pad_x) / scale) / w_orig,
+                    ((float(ymax) * s - pad_y) / scale) / h_orig,
+                )
+            )
+
             people.append({
                 "keypoints": keypoints,
                 "score": person_score,
+                "model_bbox": model_bbox,   # (x_min, y_min, x_max, y_max) 정규화
                 "regions": self._compute_regions(keypoints),
             })
 

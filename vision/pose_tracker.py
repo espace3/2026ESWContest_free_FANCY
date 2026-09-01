@@ -31,7 +31,7 @@ from __future__ import annotations
 class PoseTracker:
     REGIONS = ("head", "upper", "lower")
 
-    def __init__(self, alpha: float = 0.2, miss_thr: int = 5):
+    def __init__(self, alpha: float = 0.8, miss_thr: int = 5):
         self.alpha = alpha
         self.miss_thr = miss_thr
         self.smooth = {

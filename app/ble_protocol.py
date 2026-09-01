@@ -149,10 +149,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
 
     if axis == "tilt":
         fov_v = fov_cfg["v"]
-        # ⚠ --axis tilt 인데 팬 쪽 반전 플래그를 읽는다. 축 이름을 붙이기 전부터
-        #   이랬고(단독 스크립트 시절 --invert 하나뿐이었다), 바꾸면 실기에서 틸트
-        #   방향이 뒤집힐 수 있어 동작을 그대로 뒀다. 정리하려면 실기 확인 필요.
-        sign = -1.0 if args.invert_pan else 1.0
+        sign = -1.0 if args.invert_tilt else 1.0
         aim_key = "upper" if args.region == "chest" else args.region
 
         def _run(stop_event):

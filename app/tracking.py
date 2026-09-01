@@ -135,14 +135,13 @@ def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
         people = detector.infer(frame)["people"]
 
         target_idx = (
-            select_target([pp["keypoints"] for pp in people],
-                          conf_thr=args.conf, prev_center=prev_center)
+            select_target(people, prev_center=prev_center)
             if people else None
         )
 
         if target_idx is not None:
             kps = people[target_idx]["keypoints"]
-            new_center = person_center(kps, conf_thr=args.conf)
+            new_center = person_center(people[target_idx])
             if (prev_center is not None and new_center is not None
                     and ((new_center[0] - prev_center[0]) ** 2
                          + (new_center[1] - prev_center[1]) ** 2) ** 0.5
@@ -245,14 +244,13 @@ def run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
 
         people = detector.infer(frame)["people"]
         target_idx = (
-            select_target([pp["keypoints"] for pp in people],
-                          conf_thr=args.conf, prev_center=prev_center)
+            select_target(people, prev_center=prev_center)
             if people else None
         )
 
         if target_idx is not None:
             kps = people[target_idx]["keypoints"]
-            new_center = person_center(kps, conf_thr=args.conf)
+            new_center = person_center(people[target_idx])
             if (prev_center is not None and new_center is not None
                     and ((new_center[0] - prev_center[0]) ** 2
                          + (new_center[1] - prev_center[1]) ** 2) ** 0.5
@@ -361,14 +359,13 @@ def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
 
         people = detector.infer(frame)["people"]
         target_idx = (
-            select_target([pp["keypoints"] for pp in people],
-                          conf_thr=args.conf, prev_center=prev_center)
+            select_target(people, prev_center=prev_center)
             if people else None
         )
 
         if target_idx is not None:
             kps = people[target_idx]["keypoints"]
-            new_center = person_center(kps, conf_thr=args.conf)
+            new_center = person_center(people[target_idx])
             if (prev_center is not None and new_center is not None
                     and ((new_center[0] - prev_center[0]) ** 2
                          + (new_center[1] - prev_center[1]) ** 2) ** 0.5

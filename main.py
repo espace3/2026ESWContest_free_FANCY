@@ -249,13 +249,12 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 # ── 추론/대상 선정/스무딩 (fullbody_tracking._track_loop와 동일) ──
                 people = detector.infer(frame)["people"]
                 target_idx = (
-                    select_target([pp["keypoints"] for pp in people],
-                                  conf_thr=args.conf, prev_center=prev_center)
+                    select_target(people, prev_center=prev_center)
                     if people else None
                 )
                 if target_idx is not None:
                     kps = people[target_idx]["keypoints"]
-                    new_center = person_center(kps, conf_thr=args.conf)
+                    new_center = person_center(people[target_idx])
                     if (prev_center is not None and new_center is not None
                             and math.dist(new_center, prev_center) > DEFAULT_MATCH_RADIUS):
                         tracker.reset()  # 대상 교체 → 스무딩 리셋

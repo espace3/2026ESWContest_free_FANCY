@@ -36,8 +36,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
-from vision.target_selector import (select_target, person_center, DEFAULT_MATCH_RADIUS,
-                                    _bbox_from_keypoints)
+from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
 from vision.pose_tracker import PoseTracker
 
 # ── 색상 ─────────────────────────────────────────────────────────────────────
@@ -138,26 +137,16 @@ def draw_pose(frame: np.ndarray, people: list[dict], selected_idx: int | None) -
                 cx, cy = int(kp["x"] * w), int(kp["y"] * h)
                 cv2.circle(vis, (cx, cy), pt_radius, pt_color, -1)
 
-        # bbox 두 종류를 겹쳐 그린다 (차이 확인용)
-        #   시안  = 모델이 예측한 bbox (person["model_bbox"])
-        #   마젠타 = select_target()이 실제로 쓰는 bbox — conf 넘긴 키포인트의 min/max
-        # 가려짐·conf_thr에 따라 마젠타만 줄어드는 것을 눈으로 볼 수 있다.
+        # 대상 선정에 실제로 쓰이는 bbox — 모델이 예측한 것 (person["model_bbox"]).
+        # 선정은 면적이 아니라 이 사각형의 중심만 본다 (vision/target_selector.py).
         mb = person.get("model_bbox")
         if mb is not None:
             x0, y0, x1, y1 = mb
             cv2.rectangle(vis, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)),
                           C_CYAN, 2 if is_target else 1)
-        kb = _bbox_from_keypoints(kps, conf_thr)
-        if kb is not None:
-            x0, y0, x1, y1 = kb
-            cv2.rectangle(vis, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)),
-                          C_MAGENTA, 2 if is_target else 1)
             if is_target:
-                area_kb = (x1 - x0) * (y1 - y0)
-                area_mb = ((mb[2] - mb[0]) * (mb[3] - mb[1])) if mb is not None else 0.0
-                cv2.putText(vis, f"kp {area_kb:.3f} / model {area_mb:.3f}",
-                            (int(x0 * w), max(14, int(y0 * h) - 6)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_MAGENTA, 2)
+                cx, cy = int((x0 + x1) / 2 * w), int((y0 + y1) / 2 * h)
+                cv2.drawMarker(vis, (cx, cy), C_CYAN, cv2.MARKER_CROSS, 14, 2)
 
         # 부위(머리/상체/하체) 중심 표시는 실제 추적 대상 1인에게만
         if is_target:
@@ -572,14 +561,13 @@ def main():
             people = result["people"]
 
             # 다중 인원 중 추적 대상 1인 선정 (bbox 면적 최대, 단 직전 대상자와 면적이
-            # 비슷하면 갈아타지 않고 유지 — 히스테리시스)
             target_idx = (
-                select_target([p["keypoints"] for p in people], conf_thr=args.conf, prev_center=prev_center)
+                select_target(people, prev_center=prev_center)
                 if people else None
             )
 
             if target_idx is not None:
-                new_center = person_center(people[target_idx]["keypoints"], conf_thr=args.conf)
+                new_center = person_center(people[target_idx])
                 # 선정된 대상이 "다른 사람"으로 교체된 프레임이면(직전 대상 위치에서
                 # match_radius보다 멀리 있으면 동일인일 수 없음) 스무딩 상태를 리셋해
                 # 새 사람 위치로 즉시 점프시킨다 — EMA가 이전 사람→새 사람 사이

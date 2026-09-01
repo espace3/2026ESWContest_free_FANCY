@@ -60,6 +60,8 @@ from bluez_peripheral.gatt import Service, characteristic
 from bluez_peripheral.util import get_message_bus
 
 from config import CFG
+
+_TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 from app.tracking import (add_state_args, open_motor_from_args, run_pan_tracking,
@@ -341,15 +343,15 @@ def main() -> None:
     p.add_argument("--axis", choices=("pan", "tilt", "pantilt"), required=True,
                    help="타겟 모드일 때 돌릴 추적 축")
     p.add_argument("--model", default="multipose_lightning.tflite")
-    p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
-    p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
+    p.add_argument("--conf", type=float, default=_TRK["conf"], help="키포인트 신뢰도 임계값")
+    p.add_argument("--threads", type=int, default=_TRK["threads"], help="TFLite 스레드 수")
     # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰임 — verify_track_*.py 참고) ────
-    p.add_argument("--gain-pan", type=float, default=0.3)
-    p.add_argument("--gain-tilt", type=float, default=0.2)
-    p.add_argument("--deadzone-pan", type=float, default=1.0)
-    p.add_argument("--deadzone-tilt", type=float, default=0.5)
-    p.add_argument("--target-cx", type=float, default=0.5)
-    p.add_argument("--target-cy", type=float, default=0.5)
+    p.add_argument("--gain-pan", type=float, default=_TRK["gain"]["pan"])
+    p.add_argument("--gain-tilt", type=float, default=_TRK["gain"]["tilt"])
+    p.add_argument("--deadzone-pan", type=float, default=_TRK["deadzone"]["pan"])
+    p.add_argument("--deadzone-tilt", type=float, default=_TRK["deadzone"]["tilt"])
+    p.add_argument("--target-cx", type=float, default=_TRK["target"]["cx"])
+    p.add_argument("--target-cy", type=float, default=_TRK["target"]["cy"])
     p.add_argument("--limit", type=float, default=100.0, help="--axis pan 전용 소프트 클램프 ±°")
     lim = CFG["limits"]
     p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])

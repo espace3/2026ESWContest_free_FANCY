@@ -35,6 +35,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
+
+_TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
 from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
 from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
 from vision.pose_tracker import PoseTracker
@@ -481,9 +483,9 @@ def _release_camera(cam, backend):
 def main():
     parser = argparse.ArgumentParser(description="MoveNet MultiPose Lightning 포즈 확인용 스크립트")
     parser.add_argument("--model", default="multipose_lightning.tflite")
-    parser.add_argument("--conf", type=float, default=0.25,
+    parser.add_argument("--conf", type=float, default=_TRK["conf"],
                         help="키포인트 신뢰도 임계값 (기본 0.25)")
-    parser.add_argument("--threads", type=int, default=3,
+    parser.add_argument("--threads", type=int, default=_TRK["threads"],
                         help="TFLite 인터프리터 스레드 수 (기본 3, FPS 튜닝용)")
     parser.add_argument("--opencv", action="store_true")
     parser.add_argument("--rpicam", action="store_true",

@@ -69,6 +69,8 @@ import cv2
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import CFG
+
+_TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
@@ -252,13 +254,13 @@ def main() -> None:
     lim = CFG["limits"]
     p = argparse.ArgumentParser(description="팬+틸트 전신(머리→발) 추적 시나리오 검증")
     p.add_argument("--model", default="multipose_lightning.tflite")
-    p.add_argument("--conf", type=float, default=0.25, help="키포인트 신뢰도 임계값")
-    p.add_argument("--threads", type=int, default=3, help="TFLite 스레드 수")
+    p.add_argument("--conf", type=float, default=_TRK["conf"], help="키포인트 신뢰도 임계값")
+    p.add_argument("--threads", type=int, default=_TRK["threads"], help="TFLite 스레드 수")
     # ── 제어 (시작값은 임의 — 실기 튜닝) ─────────────────────────────────────
-    p.add_argument("--gain-pan", type=float, default=0.3, help="팬 비례 게인")
-    p.add_argument("--gain-tilt", type=float, default=0.25, help="틸트 비례 게인")
-    p.add_argument("--deadzone-pan", type=float, default=1.0, help="팬 데드존 (°)")
-    p.add_argument("--deadzone-tilt", type=float, default=0.5, help="틸트 데드존 (°)")
+    p.add_argument("--gain-pan", type=float, default=_TRK["gain"]["pan"], help="팬 비례 게인")
+    p.add_argument("--gain-tilt", type=float, default=_TRK["gain"]["tilt"], help="틸트 비례 게인")
+    p.add_argument("--deadzone-pan", type=float, default=_TRK["deadzone"]["pan"], help="팬 데드존 (°)")
+    p.add_argument("--deadzone-tilt", type=float, default=_TRK["deadzone"]["tilt"], help="틸트 데드존 (°)")
     p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
     p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"],

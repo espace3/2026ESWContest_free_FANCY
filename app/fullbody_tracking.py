@@ -263,7 +263,7 @@ def main() -> None:
     p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
     p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"],
-                   help="틸트 소프트 리밋 하한 ° (기본 config limits — 데드라인 실측 전 임시값)")
+                   help="틸트 소프트 리밋 하한 ° (기본 config limits — 상한 +15°는 기구 파손 한계, 넘기지 말 것)")
     p.add_argument("--tilt-max", type=float, default=lim["tilt"]["max"])
     p.add_argument("--invert", action="store_true", help="팬 오차 부호 반전")
     p.add_argument("--invert-tilt", action="store_true",

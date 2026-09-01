@@ -40,7 +40,7 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
   - 짧은 이동(가속+감속 거리 미달)은 램프를 앞에서부터 잘라 쓰고, 아주 짧으면
     램프 없이 f_start 저속으로만 보낸다. 기어비 반영 후 이 경로는 pan 0.135°
     (=2구간 120스텝) 미만의 잔이동만 탄다 — 몇 스텝까지 정확히/조용히
-    움직이는지 실측 필요 (TODO.md).
+    움직이는지 실측 필요 (docs/hardware_todo.md).
 
   - 위치 기억(장부 영속화): 리밋 스위치·엔코더가 없어 절대 원점을 잴 수단이
     없으므로, 장부를 주기적으로 파일에 남겨 재시작 때 되살린다
@@ -54,16 +54,8 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     timing=True(스크립트 --timing)로 이동 구간마다 드리프트·언더런을 찍어 재검증할 수
     있다. 언더런이 0이 아니면 펄스가 실제로 끊긴 것이다.
 
-TODO — 남은 미결 (docs/hardware_todo.md 참고):
-  - 각도 정확도: 오차원(기어비·백래시·탈조·원점)을 가르는 실험 순서와 보정 위치는
-    docs/angle_calibration.md. 백래시 보정을 넣을 때는 그 스텝을 장부에
-    반영하면 안 된다 (헛도는 구간이라 출력축이 안 움직인다).
-  - DIR 값 ↔ 각도 부호 매핑 실기 확인 (config stepper.*.dir_for_positive)
-  - 호밍: 리밋 스위치/엔코더 도입 여부 미결. 그 전까지는 위 장부 영속화가
-    유일한 원점 복원 수단이다 (사람이 물리 마커로 대조하는 절차 병행 권장).
-  - 회전 금지 구역: 조립 후 배선/프레임 간섭으로 정해지는 HW 제약 (모터 자체
-    한계 아님). 각도 clamp는 control 쪽 몫이라 여기서는 재계산하지 않고,
-    구역이 확정되면 config에 min/max로 추가한다.
+미결 항목(각도 정확도 보정, DIR 부호 실기 확인, 호밍 수단, 회전 금지
+구역)은 docs/hardware_todo.md 에 모아둔다.
 """
 
 from __future__ import annotations
@@ -572,7 +564,7 @@ class MotorController:
         헤드가 돌아간 채 죽은 다음 실행에서 그냥 부르면 그 자리가 새 0°가 된다.
         재시작 경로에서는 이걸 직접 부르지 말고 restore_origin()을 쓸 것 —
         상태 파일이 있으면 되살리고, 없을 때만(첫 실행) home()으로 떨어진다.
-        리밋 스위치/엔코더 도입 전까지의 방편 (TODO.md)."""
+        리밋 스위치/엔코더 도입 전까지의 방편 (docs/hardware_todo.md)."""
         for ax in (self.pan, self.tilt):
             with ax.cond:
                 if not (ax.idle and ax.target_steps == ax.pos_steps):

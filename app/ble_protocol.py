@@ -7,9 +7,9 @@ app/ble_protocol.py - BLE 프로토콜 상수 · GATT 서버 부팅 · 추적 �
 앱에서 "타겟 모드"(모드 write 0x02/0x03)를 켜면 --axis로 지정한 축의
 추적 루프(app/tracking.py의 run_*_tracking, verify_track_pan/tilt/pantilt.py와
 동일 로직)를 백그라운드 스레드로 시작하고, 전원을 끄거나 기본 모드로 돌아가면
-정지한다. 하드웨어가 아직 완성 전이라 만든 최소 통합(v1) — 부위 인식 모드
-(0x03)의 머리/상체/하체 개별 조준은 다루지 않는다(그건 app/fullbody_tracking.py의
-전신 시나리오 몫). 풍량 write도 print만 한다(릴레이/팬속도 하드웨어 미완성).
+정지한다. 추적 연동만 담은 최소 통합 단계라 부위 인식 모드(0x03)의 머리/상체/
+하체 개별 조준은 다루지 않고(그건 main.py의 부위 러너 몫), 풍량 write도 print만
+한다. 실제 릴레이 구동과 부위 모드는 app/ble_service.py → main.py 에서 붙는다.
 
 카메라는 모터/디텍터와 달리 프로세스 전체가 아니라 **추적 세션(스레드)마다
 새로 열고 끝나면 반드시 해제**한다 — 특히 `--rpicam`(rpicam-vid 서브프로세스)
@@ -315,7 +315,7 @@ class EswFanService(Service):
             print(f"[RX] 풍량: 잘못된 값 ({_hex(value)})")
             return
         print(f"[RX] 풍량: {WIND_TARGETS[value[0]]} {value[1]}단")
-        # v1 범위 밖 — 릴레이/팬속도 하드웨어 미완성이라 실제 제어는 없음.
+        # 이 단계의 범위 밖 — 실제 릴레이 구동은 app/ble_service.py 부터.
 
     # 상태(notify)는 4단계에서 에코백 구현 — 지금은 서비스 발견용으로만 등록.
     @characteristic(STATUS_UUID, CharFlags.NOTIFY)

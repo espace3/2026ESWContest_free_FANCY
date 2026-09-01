@@ -29,8 +29,8 @@ dict(장부 각도·부위 좌표), 출력은 팬/틸트 목표 각도(degree) �
 가림·리밋 처리:
   - 피드백은 fresh(이번 프레임 실관측) 부위에만 적용 — 미관측 유예 동안 스테일
     좌표를 따라 계속 내려가는 런어웨이를 막는다.
-  - 모든 틸트 목표는 [tilt_min, tilt_max]로 clamp (데드라인 실측 전 임시값은
-    config.py "limits" 참고). occl_frames 연속 미관측이거나 리밋에 눌린 채 수렴
+  - 모든 틸트 목표는 [tilt_min, tilt_max]로 clamp (config.py "limits" — 상한
+    +15°는 실측된 기구 파손 한계다). occl_frames 연속 미관측이거나 리밋에 눌린 채 수렴
     불가면 추정 틸트를 estimated=True로 기록하고 다음 부위로 진행한다.
 
 좌표 기억 구조: 수평은 body_pan 단일값(사람은 좌우로 한 덩어리로 움직이므로 팬 보정

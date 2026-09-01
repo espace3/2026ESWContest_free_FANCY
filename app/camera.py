@@ -513,7 +513,9 @@ def main():
         print(f"[ERROR] 모델 없음: {args.model}")
         sys.exit(1)
 
-    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
+    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf,
+                                        min_person_score=_TRK["min_person_score"],
+                                        num_threads=args.threads)
     cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
 
     web_srv = web_state = None

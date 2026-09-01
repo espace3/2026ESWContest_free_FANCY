@@ -128,7 +128,10 @@ CFG: dict = {
         "deadzone": {"pan": 1.0, "tilt": 0.5},
         # 조준점(정규화 화면 좌표) — 0.5, 0.5가 화면 정중앙.
         "target":   {"cx": 0.5, "cy": 0.5},
-        "conf": 0.25,      # 키포인트 신뢰도 문턱 (vision/pose_estimator.py와 통일)
+        # 두 문턱은 층이 다르다 — person_score 로 사람인지 먼저 거르고,
+        # 통과한 사람 안에서 conf 로 관절 하나하나를 거른다.
+        "conf": 0.25,              # 키포인트(관절) 신뢰도 문턱
+        "min_person_score": 0.15,  # 인물 검출 점수 문턱
         "threads": 3,      # TFLite 워커 스레드 수 (Pi 5 기준, FPS 튜닝 시 조정)
     },
 }

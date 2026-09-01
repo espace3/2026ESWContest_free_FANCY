@@ -738,7 +738,9 @@ def main() -> None:
     # finally/__exit__가 돌아 릴레이가 열린다 (docstring 9).
     _exit_on_signals()
 
-    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
+    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf,
+                                        min_person_score=_TRK["min_person_score"],
+                                        num_threads=args.threads)
     tracker = PoseTracker()
 
     web_srv = web_state = viewer_thread = None

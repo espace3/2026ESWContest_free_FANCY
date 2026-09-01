@@ -398,7 +398,9 @@ def main() -> None:
         print("[ERROR] --pan-min은 --pan-max보다 작아야 합니다")
         sys.exit(1)
 
-    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf, num_threads=args.threads)
+    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf,
+                                        min_person_score=_TRK["min_person_score"],
+                                        num_threads=args.threads)
     tracker = PoseTracker()
 
     web_srv = web_state = viewer_thread = None

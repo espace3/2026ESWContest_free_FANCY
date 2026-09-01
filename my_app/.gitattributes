@@ -1,0 +1,5 @@
+# gradlew 는 반드시 LF 여야 리눅스/맥에서 실행된다 (CRLF 면 bad interpreter).
+gradlew     text eol=lf
+gradlew.bat text eol=crlf
+*.jar       binary
+*.apk       binary

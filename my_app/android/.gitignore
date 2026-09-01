@@ -1,11 +1,11 @@
-gradle-wrapper.jar
 /.gradle
 /captures/
-/gradlew
-/gradlew.bat
 /local.properties
 GeneratedPluginRegistrant.java
 .cxx/
+
+# Gradle wrapper(gradle-wrapper.jar, gradlew, gradlew.bat)는 의도적으로 커밋한다.
+# 클론 직후 ./gradlew 로 동일 Gradle 버전 빌드가 재현되어야 하기 때문.
 
 # Remember to never publicly share your keystore.
 # See https://flutter.dev/to/reference-keystore

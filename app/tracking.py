@@ -1,5 +1,6 @@
 """
-scripts/tracking_core.py - 팬/틸트 추적 루프 공유 모듈
+app/tracking.py - 팬/틸트 닫힌 루프 공유 모듈
+(개발 이력상 tracking_core.py)
 
 verify_track_pan.py / verify_track_tilt.py / verify_track_pantilt.py가 각각
 독립적으로 갖고 있던 while-루프 본문과 헬퍼(chest_point/_DryMotor/_open_motor)를
@@ -8,7 +9,7 @@ verify_track_pan.py / verify_track_tilt.py / verify_track_pantilt.py가 각각
 호출하도록 리팩터되어 있으며 `stop_event`를 아무도 set하지 않으므로 단독 실행 시
 동작은 기존과 100% 동일하다.
 
-verify_E2E_v1.py는 BLE "타겟 모드" 명령에 맞춰 이 함수 중 하나를 백그라운드
+app/ble_protocol.py는 BLE "타겟 모드" 명령에 맞춰 이 함수 중 하나를 백그라운드
 스레드로 시작/정지시키는 용도로 재사용한다 (stop_event.set() 후 join).
 """
 
@@ -87,7 +88,7 @@ def add_state_args(parser) -> None:
     ms = CFG.get("motor_state", {})
     parser.add_argument("--state-file", default=ms.get("file", "motor_state.json"),
                         help="모터 위치 상태 파일 (재시작 시 원점 복원용, 모든 스크립트 공용)")
-    # 아래 셋은 추적 중 달그락 소음(lgpio 펄스 스레드 선점) 관련 — hardware/lgpio_patch.md
+    # 아래 셋은 추적 중 달그락 소음(lgpio 펄스 스레드 선점) 관련 — docs/lgpio_patch.md
     parser.add_argument("--timing", action="store_true",
                         help="이동 구간마다 펄스 타이밍 실측 출력 (드리프트·언더런)")
     parser.add_argument("--no-pin", action="store_true",
@@ -109,7 +110,7 @@ def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
     """verify_track_pan.py의 루프 본문 (팬만 제어, 틸트는 0° 고정)."""
     from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
     from control.control_signal_generator import compute_pan_angle, apply_deadzone, clamp_angle
-    from verify_movenet import _read_frame, draw_pose
+    from app.camera import _read_frame, draw_pose
 
     prev_center: tuple[float, float] | None = None
     last_sent = 0.0
@@ -220,7 +221,7 @@ def run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
     from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
     from vision.pose_tracker import PoseTracker
     from control.control_signal_generator import apply_deadzone, clamp_angle, compute_tilt_angle
-    from verify_movenet import _read_frame, draw_pose
+    from app.camera import _read_frame, draw_pose
 
     prev_center: tuple[float, float] | None = None
     last_sent = 0.0
@@ -336,7 +337,7 @@ def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
     from vision.pose_tracker import PoseTracker
     from control.control_signal_generator import (apply_deadzone, clamp_angle,
                                                   compute_pan_angle, compute_tilt_angle)
-    from verify_movenet import _read_frame, draw_pose
+    from app.camera import _read_frame, draw_pose
 
     prev_center: tuple[float, float] | None = None
     last_pan = last_tilt = 0.0

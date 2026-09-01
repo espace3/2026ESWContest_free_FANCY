@@ -3,7 +3,7 @@ control/recognition_reporter.py
 
 객체 인식 Status(BLE notify 0x02)를 **언제 보낼지** 정하는 순수 판정 모듈 —
 GPIO/BlueZ/카메라를 import하지 않는다. 부위 모드 러너와 일반 타겟 모드
-추적 러너가 함께 쓴다(scripts/verify_E2E_v3.py) — 어느 한 모드 전용이 아니라
+추적 러너가 함께 쓴다(main.py) — 어느 한 모드 전용이 아니라
 공통 notify 정책이라 별도 모듈로 둔다.
 
 핵심 문제: 프레임 단위 검출은 경계(먼 거리·부분 가림·역광)에서 빠르게

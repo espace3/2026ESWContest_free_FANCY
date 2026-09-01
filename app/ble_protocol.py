@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-scripts/verify_E2E_v1.py - BLE 타겟 모드 → 팬/틸트 추적 루프 연동 (v1)
+app/ble_protocol.py - BLE 프로토콜 상수 · GATT 서버 부팅 · 추적 러너
+(개발 이력상 verify_E2E_v1.py — 프로토콜 명세는 docs/ble_protocol.md)
 
 앱에서 "타겟 모드"(모드 write 0x02/0x03)를 켜면 --axis로 지정한 축의
-추적 루프(tracking_core.run_*_tracking, verify_track_pan/tilt/pantilt.py와
+추적 루프(app/tracking.py의 run_*_tracking, verify_track_pan/tilt/pantilt.py와
 동일 로직)를 백그라운드 스레드로 시작하고, 전원을 끄거나 기본 모드로 돌아가면
 정지한다. 하드웨어가 아직 완성 전이라 만든 최소 통합(v1) — 부위 인식 모드
-(0x03)의 머리/상체/하체 개별 조준은 다루지 않는다(그건 verify_fulltrack.py의
+(0x03)의 머리/상체/하체 개별 조준은 다루지 않는다(그건 app/fullbody_tracking.py의
 전신 시나리오 몫). 풍량 write도 print만 한다(릴레이/팬속도 하드웨어 미완성).
 
 카메라는 모터/디텍터와 달리 프로세스 전체가 아니라 **추적 세션(스레드)마다
@@ -25,10 +26,10 @@ cv2 창은 추적 스레드가 직접 그리지 않는다 — HighGUI(GTK)는 �
     (bluez_peripheral --pre, tflite-runtime, opencv-python 등).
 
 실행 (RPi 5, 레포 루트에서):
-    python3 scripts/verify_E2E_v1.py --axis pan
-    python3 scripts/verify_E2E_v1.py --axis tilt --rpicam
-    python3 scripts/verify_E2E_v1.py --axis pantilt --rpicam --no-window
-    python scripts/verify_E2E_v1.py --axis pan --dry-run --opencv   # 개발 PC, 모터/BLE 없이 파이프라인만
+    python3 app/ble_protocol.py --axis pan
+    python3 app/ble_protocol.py --axis tilt --rpicam
+    python3 app/ble_protocol.py --axis pantilt --rpicam --no-window
+    python app/ble_protocol.py --axis pan --dry-run --opencv   # 개발 PC, 모터/BLE 없이 파이프라인만
 
 축별 튜닝 인자는 verify_track_pan/tilt/pantilt.py와 이름이 같다
 (--gain/--deadzone/--target-cx는 pan·pantilt, --gain-tilt/--deadzone-tilt/
@@ -49,9 +50,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# 레포 루트 + scripts 디렉터리를 path에 추가 (config/vision/control + 카메라 백엔드 재사용)
+# 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from bluez_peripheral.adapter import Adapter
 from bluez_peripheral.advert import Advertisement
@@ -62,9 +62,9 @@ from bluez_peripheral.util import get_message_bus
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
-from tracking_core import (add_state_args, open_motor_from_args, run_pan_tracking,
+from app.tracking import (add_state_args, open_motor_from_args, run_pan_tracking,
                            run_tilt_tracking, run_pantilt_tracking)
-from verify_movenet import (_open_camera, _read_frame, _release_camera,
+from app.camera import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
 # ── 프로토콜 (ble_protocol.md / verify_ble.py와 일치해야 함) ──
@@ -87,7 +87,7 @@ def _hex(value):
 
 
 def _make_runner(axis, detector, tracker, mc, args, web_state):
-    """axis에 맞는 tracking_core 루프를 stop_event 하나만 받는 콜러블로 감싼다.
+    """axis에 맞는 app/tracking.py 루프를 stop_event 하나만 받는 콜러블로 감싼다.
 
     카메라는 세션(스레드)마다 새로 열고 끝나면 반드시 해제한다 — 특히
     `--rpicam`(rpicam-vid 서브프로세스) 백엔드는 아무도 읽지 않는 동안 파이프
@@ -154,7 +154,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
         # run_tilt_tracking은 verify_track_tilt.py 원본 그대로 args.gain/args.deadzone을
         # 틸트 이득/데드존으로 읽는다 (단독 스크립트 시절엔 축 접두사가 없었음).
         # 이 스크립트의 인터페이스는 --gain-tilt/--deadzone-tilt이므로 여기서 옮겨
-        # 심는다 — tracking_core를 고치면 verify_track_tilt.py 동작이 바뀌기 때문.
+        # 심는다 — app/tracking.py를 고치면 verify_track_tilt.py 동작이 바뀌기 때문.
         args.gain = args.gain_tilt
         args.deadzone = args.deadzone_tilt
 
@@ -366,7 +366,7 @@ def main() -> None:
     p.add_argument("--invert-tilt", action="store_true")
     p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
                    help="--axis tilt 전용 조준 부위")
-    # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
+    # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)

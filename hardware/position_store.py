@@ -24,7 +24,7 @@ MotorController.home()은 원점을 찾는 게 아니라 "지금 이 위치를 0
   - 탈조: 장부는 "보낸 펄스"라서 모터가 놓친 스텝은 반영되지 않는다.
   - 마지막 저장 이후의 이동분: 주기 저장이라 전원이 뚝 끊기면 그만큼 유실된다.
 헤드와 베이스에 0° 물리 마커를 표시해두고 복원 후 눈으로 대조할 것
-(hardware/TODO.md 호밍 항목).
+(docs/hardware_todo.md 호밍 항목).
 """
 
 from __future__ import annotations

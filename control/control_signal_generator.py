@@ -3,8 +3,8 @@ control/control_signal_generator.py
 
 카메라 좌표계 → 모터 제어값 변환, 거리 추정 — 순수 계산 모듈.
 GPIO/UART/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
-입력은 vision/ 모듈이 만든 키포인트·정규화 좌표, 출력은 각도(degree)나
-모터 회전 속도 단계(int) 등 순수 값입니다. 실제로 모터를 움직이는 코드는
+입력은 vision/ 모듈이 만든 키포인트·정규화 좌표, 출력은 각도(degree)·거리(m)
+같은 순수 값입니다. 실제로 모터를 움직이는 코드는
 hardware/motor_controller.py 쪽 몫입니다.
 
 주의: 선풍기 풍속(바람 세기)은 이 모듈이 다루는 대상이 아닙니다 — 풍속은
@@ -82,26 +82,3 @@ def estimate_distance_m(
     if max_m is not None and distance_m > max_m:
         return max_m
     return distance_m
-
-
-def motor_speed_zone(distance_m: float, near_m: float, mid_m: float) -> int:
-    """추정 거리(m)를 팬틸트 모터 회전 속도 단계(1~3)로 매핑한다.
-
-    주의: 이건 선풍기 풍속(바람 세기)이 아니라 모터가 목표를 따라가는 "회전
-    속도" 단계다. 풍속은 부위별로 사용자가 앱에서 BLE로 직접 지정하는 값이라
-    거리 추정과는 무관하다 (그쪽은 hardware/relay_controller.py + BLE 서버 몫).
-
-    이 함수가 필요한 이유: 카메라에 가까운 사람은 같은 실제 움직임에도 화면
-    상의 각도 변화가 더 커서(근접할수록 시야각 대비 이동량이 큼) 모터가 더
-    빨리 반응해야 놓치지 않는다. 반대로 멀리 있는 사람은 각도 변화가 작으니
-    천천히 움직여도 충분하다.
-
-    near_m 이내 → 1단(가장 빠름), mid_m 이내 → 2단, 그 밖 → 3단(가장 느림).
-    (config.py의 speed_zones.near / speed_zones.mid 값을 그대로 넘기면 됨.
-    실제 방향(가까울수록 빠르게/느리게)은 모터 붙여보고 튜닝 필요.)
-    """
-    if distance_m <= near_m:
-        return 1
-    if distance_m <= mid_m:
-        return 2
-    return 3

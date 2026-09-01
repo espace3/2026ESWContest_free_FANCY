@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-scripts/verify_E2E_v2.py - BLE 타겟 모드 → 추적 + 풍속 릴레이 실구동 (v2)
+app/ble_service.py - 모드 감독 · 풍속 릴레이 연동 · 전원 게이팅
+(개발 이력상 verify_E2E_v2.py)
 
-verify_E2E_v1.py(추적 연동 원형)와의 차이점만 기록합니다 — 카메라 세션 관리,
+app/ble_protocol.py(추적 연동 원형)와의 차이점만 기록합니다 — 카메라 세션 관리,
 cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 상단 docstring과
 동일하므로 반복하지 않습니다:
 
@@ -62,9 +63,9 @@ cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 �
      (Advertising은 timeout=0이라 BlueZ가 끊김 후 자동 재개).
 
 실행 (RPi 5, 레포 루트에서):
-    python3 scripts/verify_E2E_v2.py --axis pan
-    python3 scripts/verify_E2E_v2.py --axis pantilt --rpicam --no-window
-    python scripts/verify_E2E_v2.py --axis pan --dry-run --opencv   # 개발 PC
+    python3 app/ble_service.py --axis pan
+    python3 app/ble_service.py --axis pantilt --rpicam --no-window
+    python app/ble_service.py --axis pan --dry-run --opencv   # 개발 PC
 """
 
 from __future__ import annotations
@@ -75,9 +76,8 @@ import sys
 import threading
 from pathlib import Path
 
-# 레포 루트 + scripts 디렉터리를 path에 추가 (config/vision/control + v1 재사용)
+# 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from bluez_peripheral.adapter import Adapter
 from bluez_peripheral.advert import Advertisement
@@ -90,9 +90,9 @@ from dbus_fast.message import Message
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
-from tracking_core import add_state_args, open_motor_from_args
-from verify_movenet import _WebStreamState, _make_handler, _ThreadedHTTP
-from verify_E2E_v1 import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
+from app.tracking import add_state_args, open_motor_from_args
+from app.camera import _WebStreamState, _make_handler, _ThreadedHTTP
+from app.ble_protocol import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
                            STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS,
                            _TARGET_MODES, _hex, _make_runner, _window_viewer,
                            _TrackingSupervisor)
@@ -420,7 +420,7 @@ def main() -> None:
                    help="회전 모드 pan 스윕 반각 — 0° 기준 ±° (docstring 7)")
     p.add_argument("--rotate-speed", type=float, default=20.0,
                    help="회전 모드 스윕 속도 (°/s)")
-    # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
+    # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)

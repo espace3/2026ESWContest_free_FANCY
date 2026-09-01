@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-scripts/verify_E2E_v3.py - STATUS 실구현 + 리모컨 주체 동기화 (v3, 1단계)
+main.py - 최종 진입점: BLE + 추적 + 부위별 풍속
+(개발 이력상 verify_E2E_v3.py — v1→v2→v3 계보는 README "실행 파일 구성" 참고)
 
-verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레드/축별 튜닝/
+app/ble_service.py와의 차이만 기록합니다 — 카메라 세션/창 스레드/축별 튜닝/
 회전 스윕/연결 끊김 처리 등은 v1·v2 docstring과 동일하므로 반복하지 않습니다:
 
   1. 리모컨(앱) = 설정의 주체 — v2의 모드별 풍량 preset(_basic/_target_level)과
@@ -74,9 +75,9 @@ verify_E2E_v2.py와의 차이만 기록합니다 — 카메라 세션/창 스레
      KeyboardInterrupt로 바꿔 Ctrl+C와 같은 정리 경로를 타게 했다.
 
 실행 (RPi 5, 레포 루트에서):
-    python3 scripts/verify_E2E_v3.py --axis pan
-    python3 scripts/verify_E2E_v3.py --axis pantilt --rpicam --no-window
-    python scripts/verify_E2E_v3.py --axis pan --dry-run --opencv   # 개발 PC
+    python3 main.py --axis pan
+    python3 main.py --axis pantilt --rpicam --no-window
+    python main.py --axis pan --dry-run --opencv   # 개발 PC
 """
 
 from __future__ import annotations
@@ -90,8 +91,7 @@ import threading
 import time
 from pathlib import Path
 
-# 레포 루트 + scripts 디렉터리를 path에 추가 (config/vision/control + v1·v2 재사용)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent))
 
 import cv2
@@ -112,14 +112,14 @@ from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 from vision.target_selector import (DEFAULT_MATCH_RADIUS, person_center,
                                     select_target)
-from tracking_core import add_state_args, open_motor_from_args
-from verify_movenet import (_open_camera, _read_frame, _release_camera,
+from app.tracking import add_state_args, open_motor_from_args
+from app.camera import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
-from verify_fulltrack import _INVISIBLE, _axes_idle, _draw_overlay, chest_point
-from verify_E2E_v1 import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
+from app.fullbody_tracking import _INVISIBLE, _axes_idle, _draw_overlay, chest_point
+from app.ble_protocol import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
                            STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS,
                            _hex, _make_runner, _window_viewer)
-from verify_E2E_v2 import (_DryRelay, _make_sweeper, _make_homer,
+from app.ble_service import (_DryRelay, _make_sweeper, _make_homer,
                            _ModeSupervisor, _watch_disconnects)
 
 
@@ -148,8 +148,8 @@ def _open_cam_retry(args):
 class _ReportingDetector:
     """추적 러너용 디텍터 래퍼 — "사람이 보이는가"를 서비스에 보고한다.
 
-    일반 타겟 모드(0x02)의 추적 루프는 tracking_core 안에 있어 콜백 자리가 없다.
-    공유 모듈(v1 _make_runner·tracking_core — verify_track_*와 공용)을 고치지 않고
+    일반 타겟 모드(0x02)의 추적 루프는 app/tracking.py 안에 있어 콜백 자리가 없다.
+    공유 모듈(ble_protocol._make_runner · app/tracking.py — 추적 모드 공용)을 고치지 않고
     인식 상태를 얻으려고 디텍터를 감쌌다: infer 결과를 들여다보기만 하고 그대로
     돌려준다. 서비스는 나중에 만들어지므로(supervisor → service 순서) attach로
     꽂는다. 보고 시점은 RecognitionReporter가 정한다(깜빡임 억제).
@@ -179,7 +179,7 @@ class _ReportingDetector:
 def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_state):
     """부위 모드(0x03) 러너 — 내부 2상(순찰↔추적 폴백) 단일 세션 (docstring 5).
 
-    verify_fulltrack._track_loop를 세션형(stop_event)으로 옮기고 풍속 중재
+    fullbody_tracking._track_loop를 세션형(stop_event)으로 옮기고 풍속 중재
     (body_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
     시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자 위치·거리가
     달라졌을 수 있어서인데, 직접 매핑이라 다시 잡는 비용이 한 프레임이다.
@@ -246,7 +246,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     stop_event.wait(0.03)
                     continue
 
-                # ── 추론/대상 선정/스무딩 (verify_fulltrack._track_loop와 동일) ──
+                # ── 추론/대상 선정/스무딩 (fullbody_tracking._track_loop와 동일) ──
                 people = detector.infer(frame)["people"]
                 target_idx = (
                     select_target([pp["keypoints"] for pp in people],
@@ -640,7 +640,7 @@ def main() -> None:
     p.add_argument("--rotate-speed", type=float, default=20.0,
                    help="회전 모드 스윕 속도 (°/s)")
     # ── 부위 모드 (0x03) — docstring 5. 세부 시나리오 파라미터(수렴/탐색 등)는
-    #    verify_fulltrack과 같은 기본값을 쓴다 (control/fullbody_scenario.py) ──
+    #    app/fullbody_tracking.py와 같은 기본값을 쓴다 (control/fullbody_scenario.py) ──
     p.add_argument("--body-dwell", type=float, default=2.0,
                    help="부위 순찰 체류 시간 (s)")
     p.add_argument("--body-exit-deg", type=float, default=12.0,
@@ -679,7 +679,7 @@ def main() -> None:
                    help="수렴 판정 오차 (° — 순찰 도착·재조준·탐색 공용)")
     p.add_argument("--body-map-timeout", type=float, default=1.5,
                    help="매핑에서 부위가 안 보일 때 추정으로 넘어가는 시간 (s)")
-    # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
+    # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)

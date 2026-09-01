@@ -64,7 +64,7 @@ class MoveNetMultiPoseDetector:
     def __init__(
         self,
         model_path: str,
-        conf_thr: float = 0.25,        # scripts/verify_movenet.py --conf 기본값과 통일
+        conf_thr: float = 0.25,        # app/camera.py --conf 기본값과 통일
         min_person_score: float = 0.15,
         num_threads: int = 3,          # Pi 5 기준 무난한 값 — FPS 튜닝 시 조정
     ) -> None:

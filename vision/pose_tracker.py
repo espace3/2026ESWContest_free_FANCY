@@ -47,7 +47,7 @@ class PoseTracker:
         다음 관측값을 EMA로 섞지 않고 그대로 받아들이게(즉시 점프) 만든다 —
         이전 사람 좌표와 새 사람 좌표를 섞어 조준점이 허공을 미끄러지는 것 방지.
         대상 교체 감지(직전 대상 위치와의 거리 비교)는 prev_center 상태를 가진
-        호출부의 몫이다 (scripts/verify_movenet.py 참고).
+        호출부의 몫이다 (app/camera.py 참고).
         """
         for k in self.REGIONS:
             self.miss[k] = self.miss_thr

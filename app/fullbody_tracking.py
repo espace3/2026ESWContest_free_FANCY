@@ -1,5 +1,6 @@
 """
-scripts/verify_fulltrack.py - 팬+틸트 전신(머리→발) 추적 4단계 검증 스크립트
+app/fullbody_tracking.py - 팬+틸트 전신(머리→발) 추적 루프
+(개발 이력상 verify_fulltrack.py)
 
 verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라가 팬·틸트 헤드에 함께 실려 있다는
 전제로 전신 시나리오를 검증한다. 이 파일도 계산 로직을 담지 않는다:
@@ -8,7 +9,7 @@ verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라
   - 좌표→각도/데드존/리밋:  control/control_signal_generator (+ config "limits")
   - 실제 모터 구동:  hardware/motor_controller
 여기서는 이들을 엮어 매 프레임 돌리고, 상태 전이·수렴을 로그로 남기고, 원점
-복귀/복원(요구 5)을 처리한다. 카메라 캡처는 verify_movenet 백엔드를 재사용한다.
+복귀/복원(요구 5)을 처리한다. 카메라 캡처는 app/camera.py 백엔드를 재사용한다.
 
 ────────────────────────────────────────────────────────────────────────────
 ⚠ 알려진 미해결 문제 (편집·확장 전 반드시 고려할 것 — 2026-07-10 합성 검증)
@@ -46,13 +47,13 @@ verify_track_pan.py/verify_track_tilt.py(축 단독)의 다음 단계. 카메라
     기록된 만큼 되돌아와 0°에서 출발한다. 종료 시에도 (0°,0°)로 복귀한다.
   - 영점 자체를 새로 잡으려면 scripts/set_origin.py를 한 번 실행한다.
   - 두 축 모두 기어 자기잠금이라 전원이 꺼져도 위치가 유지된다 → 복원 신뢰 가능.
-    남는 오차원은 탈조뿐이다 (hardware/TODO.md 호밍 항목).
+    남는 오차원은 탈조뿐이다 (docs/hardware_todo.md 호밍 항목).
 
 실기 검증 절차 (RPi 5, 레포 루트에서):
     # 0) 틸트 방향/속도는 verify_track_tilt.py로 먼저 확정할 것 (--invert 필요 여부)
-    python scripts/verify_fulltrack.py                        # 1) 스캔 수렴 → 순찰
-    python scripts/verify_fulltrack.py --web --no-window      # SSH: 브라우저 확인
-    python scripts/verify_fulltrack.py --dry-run --opencv     # 개발 PC, 모터 없이
+    python app/fullbody_tracking.py                        # 1) 스캔 수렴 → 순찰
+    python app/fullbody_tracking.py --web --no-window      # SSH: 브라우저 확인
+    python app/fullbody_tracking.py --dry-run --opencv     # 개발 PC, 모터 없이
 """
 
 from __future__ import annotations
@@ -65,9 +66,8 @@ from pathlib import Path
 
 import cv2
 
-# 레포 루트 + scripts 디렉터리를 path에 추가 (config/vision/control + 카메라 백엔드 재사용)
+# 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent))
 
 from config import CFG
 from vision.pose_estimator import MoveNetMultiPoseDetector
@@ -75,9 +75,9 @@ from vision.pose_tracker import PoseTracker
 from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
 from control.control_signal_generator import apply_deadzone
 from control.fullbody_scenario import FullBodyScenario
-# 모터 열기/원점 복원 헬퍼는 tracking_core 공용 (verify_track_*와 같은 상태 파일 사용)
-from tracking_core import add_state_args, open_motor_from_args
-from verify_movenet import (_open_camera, _read_frame, _release_camera, draw_pose,
+# 모터 열기/원점 복원 헬퍼는 app/tracking.py 공용 (verify_track_*와 같은 상태 파일 사용)
+from app.tracking import add_state_args, open_motor_from_args
+from app.camera import (_open_camera, _read_frame, _release_camera, draw_pose,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
 # 어깨 키포인트 인덱스 (COCO): 5=l_shoulder, 6=r_shoulder, 0=nose
@@ -289,7 +289,7 @@ def main() -> None:
     add_state_args(p)
     p.add_argument("--no-restore", action="store_true",
                    help="시작 시 원점 복원 생략 (헤드를 손으로 0°에 맞춰뒀을 때)")
-    # ── 카메라 백엔드 (verify_movenet과 동일) ────────────────────────────────
+    # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
     p.add_argument("--cam", type=int, default=0)
@@ -335,7 +335,7 @@ def main() -> None:
         threading.Thread(target=web_srv.serve_forever, daemon=True).start()
         print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
 
-    print("\n[verify_fulltrack] 전신 추적 시작 — 카메라가 팬·틸트 헤드에 함께 실린 상태를 가정합니다.")
+    print("\n[fullbody] 전신 추적 시작 — 카메라가 팬·틸트 헤드에 함께 실린 상태를 가정합니다.")
     print(f"  gain={args.gain}/{args.gain_tilt}  deadzone={args.deadzone}/{args.deadzone_tilt}°  "
           f"tilt=[{args.tilt_min:g},{args.tilt_max:g}]°  invert={args.invert}/{args.invert_tilt}")
 
@@ -354,13 +354,13 @@ def main() -> None:
             finally:
                 _return_home(mc)
     except KeyboardInterrupt:
-        print("\n[verify_fulltrack] Ctrl+C 중단")
+        print("\n[fullbody] Ctrl+C 중단")
     finally:
         if web_srv:
             web_srv.shutdown(); web_srv.server_close()
         _release_camera(cam, backend)
         cv2.destroyAllWindows()
-        print("\n[verify_fulltrack] 종료")
+        print("\n[fullbody] 종료")
 
 
 if __name__ == "__main__":

@@ -1,119 +1,259 @@
-# ESW
-
-2026 ESW Contest Codes — Team FANCY, "AI 스마트 타겟 선풍기"
+# 2026 ESW Contest 자유공모 — Team FANCY
 
 카메라로 사용자를 실시간 인식·추적해 팬틸트 헤드로 바람 방향을 자동 조준하고,
-머리/상체/하체 3부위를 구분해 부위별 맞춤 풍속을 제공하는 임베디드 프로젝트입니다.
-스마트폰 앱(Flutter)과 BLE로 연동하며, 모든 추론은 온디바이스(Raspberry Pi 5)로 처리합니다.
+**머리 / 상체 / 하체** 3부위를 구분해 부위별 맞춤 풍속을 제공하는 임베디드 시스템 프로젝트입니다.
+
+## 프로젝트 목표
+- 
+- 
+- 
+- 스마트폰 앱(Flutter)과 BLE로 연동하며, **모든 추론은 온디바이스**(Raspberry Pi 5)에서
+처리합니다 — 클라우드·외부 네트워크 호출이 없습니다.
+
+---
+
+## 최종 실행
+
+전체 기능(BLE + 추적 + 부위별 풍속)이 통합된 **진입점은 `main.py`** 하나입니다.
+
+```bash
+# Raspberry Pi 5 — 레포 루트에서
+python3 main.py --axis pantilt --rpicam --no-window
+
+# 로컬 창으로 화면을 보며 확인
+python3 main.py --axis pantilt
+
+# 개발 PC (모터·릴레이 없이 로직만)
+python3 main.py --axis pan --dry-run --opencv
+```
+
+실행하면 `ESW-FAN`으로 광고를 시작하고, 앱이 연결해 모드/전원/풍량을 보내면 동작합니다.
+**첫 실행 전에 반드시 영점을 잡으세요** — 아래 [설치](#설치) 5번.
+
+`main.py`가 쓰는 나머지 코드는 `app/` 패키지에 있습니다 — 아래
+[실행 파일 구성](#실행-파일-구성) 참고.
+
+---
+
+## 시스템 개요
+
+```
+                        ┌─────────────── Raspberry Pi 5 ───────────────┐
+   Pi Camera Module 3   │                                              │
+        ─────────────►  │  vision/    프레임 → 17 keypoint (최대 6인)   │
+                        │             → 대상자 1인 선정 → EMA 스무딩    │
+                        │                     │                        │
+                        │  control/   좌표 → 팬/틸트 각도, 데드존,      │
+                        │             거리 추정, 부위 순찰 시나리오      │
+                        │                     │                        │
+                        │  hardware/  ────────┴──────┐                 │
+                        └───────│─────────────────│──┘                 │
+                                ▼                 ▼                    │
+                        스테퍼 드라이버        릴레이(TS0011)            │
+                        팬(유성)·틸트(웜)      선풍기 풍속 탭 3단         │
+                                                                       │
+   Flutter 앱  ◄──── BLE (BlueZ GATT, Pi = Peripheral) ────────────────┘
+   전원·모드·부위별 풍량 설정 / 상태 수신
+```
+
+### 동작 모드
+
+| 모드 | 동작 |
+|---|---|
+| 기본-고정 / 기본-회전 | 추적 없이 기존 선풍기처럼 동작 |
+| **타겟** | 사용자의 가슴(어깨 중점)을 화면 중앙에 붙잡는 닫힌 루프 추적 |
+| **타겟-부위** | 머리 → 상체 → 하체를 순찰하며 부위별로 설정된 풍속을 적용.<br>사용자가 이동하면 자동으로 추적으로 폴백했다가, 잠잠해지면 순찰 재개 |
+
+풍속은 **앱이 정하는 값**이고, 거리 추정으로 바뀌는 것은 **모터 회전 속도**입니다
+(두 경로는 서로 독립입니다 — 자세한 계약은 [`docs/ble_protocol.md`](docs/ble_protocol.md)).
+
+---
 
 ## 플랫폼 & 스택
 
-- 보드: Raspberry Pi 5 + Pi Camera Module 3
-- OS/언어: Raspberry Pi OS Lite 64-bit, Python 3.11.15
-- 추론: TFLite Runtime, MoveNet MultiPose Lightning (17 keypoints, 최대 6명 동시 검출).
-  기본 입력 256x256이지만 FPS 확보를 위해 현재 160x160으로 낮춰 운용 중
-  (`vision/pose_estimator.py`의 `INPUT_SIZE`) — 낮춘 해상도 기준 정확도(mAP) 재측정 필요
-- 영상: OpenCV 4.x / BLE: BlueZ 5.x GATT 서버 / 앱: Flutter(Dart)
+- **보드**: Raspberry Pi 5 + Pi Camera Module 3
+- **OS / 언어**: Raspberry Pi OS Lite 64-bit, Python 3.11.15
+- **추론**: TFLite Runtime + MoveNet MultiPose Lightning
+  (17 COCO keypoints, 최대 6인 동시 검출). 기본 입력 256×256이지만 FPS 확보를 위해
+  **160×160**으로 낮춰 운용합니다 (`vision/pose_estimator.py`의 `INPUT_SIZE`)
+- **영상**: OpenCV 4.x
+- **BLE**: BlueZ 5.x GATT 서버 (`bluez_peripheral` / dbus_fast), Pi = Peripheral
+- **GPIO**: lgpio — Pi 5는 pigpio(DMA 하드웨어 타이밍)를 쓸 수 없습니다
+- **앱**: Flutter (Dart), Android 우선
 
-## 구조
+---
 
-```
-vision/              # 순수 계산 모듈 (하드웨어 의존성 없음)
-  pose_estimator.py    # MoveNetMultiPoseDetector: 프레임 → 검출된 모든 사람의 키포인트/부위(머리·상체·하체) 중심 좌표
-  pose_tracker.py       # PoseTracker: 선정된 대상자 부위 중심 좌표 EMA 스무딩 + 부위별 miss 판정 (연속으로 안 보이면 visible=False, 대상 교체/재획득 시 EMA 없이 즉시 점프)
-  target_selector.py    # 다중 인원 중 bbox 면적 최대 1인 선정 (면적 비슷하면 기존 대상자 유지하는 히스테리시스 포함)
-control/             # 순수 계산 모듈 (하드웨어 의존성 없음)
-  control_signal_generator.py  # 좌표→각도 변환, 데드존, 거리 추정, 모터 회전 속도 단계 매핑 (풍속 아님 — 풍속은 BLE로 사용자가 부위별 지정)
-  fullbody_scenario.py         # 전신(머리→발) 추적 시나리오 상태기계: 스캔→웨이포인트 순찰, 이동 재획득(재조준/어깨 탐색), 가림·틸트 리밋 처리
-hardware/            # 하드웨어 호출 전용 모듈 (계산 모듈이 만든 값을 GPIO로 내보내기만 함)
-  motor_controller.py  # 팬틸트 스테퍼 모터 구동 — 논블로킹 (축별 워커 스레드, 최신 목표 선점, 위치 저장/복원)
-  relay_controller.py  # 선풍기 풍속 릴레이(TS0011) 구동 — 논블로킹 (break-before-make 워커, 전부 오픈=정지)
-  position_store.py    # 팬틸트 장부 위치(스텝)를 파일에 저장/복원 — 재시작 시 중앙으로 되돌아오기 위한 것
-  TODO.md              # 하드웨어 관련 미결 결정·실기 검증 항목
-scripts/             # 단계별 수동 검증 스크립트
-  verify_movenet.py     # 1단계: 카메라 캡처 + 시각화/웹스트림으로 포즈 추정 확인
-  verify_motor.py       # 2단계: 스텝모터 단독 구동 (lgpio tx_pwm, 회전수 단위)
-  verify_pantilt.py     # 2단계: MotorController 각도 단위 검증 (단발/왕복/속도/선점/짧은 이동)
-  set_origin.py         # 지금 헤드가 향한 곳을 영점(0°)으로 기록 (모터는 안 움직임, 인자 없음)
-  tracking_core.py      # 3단계 공유 모듈: chest_point/_DryMotor/_open_motor/상태파일 인자 +
-                         # run_pan/tilt/pantilt_tracking (아래 세 verify_track_*.py가 공용)
-  verify_track_pan.py   # 3단계: 카메라 기반 팬 추적 닫힌 루프 (가슴 화면 중앙 정렬)
-  verify_track_tilt.py  # 3단계: 틸트 단독 추적 닫힌 루프 (방향/속도/소프트 리밋 검증, 부위 조준 예행)
-  verify_track_pantilt.py # 3단계: 팬+틸트 동시 추적 닫힌 루프 (어깨 중심 지속 조준 — 한 관측=한 명령)
-  verify_fulltrack.py   # 4단계: 팬+틸트 전신 추적 시나리오 (fullbody_scenario 검증, 원점 복귀/복원 포함)
-  verify_ble.py         # BLE 단계: bluez_peripheral GATT 서버 print 검증 (ESW-FAN 광고, 앱 write 수신 확인)
-  verify_relay.py       # 릴레이 단계: FanRelay 단독 실기 검증 (정지→미풍→약풍→강풍 순환, 극성/guard 확인)
-  verify_ble_v2.py      # BLE 단계 v2: verify_ble.py + WIND/POWER write를 FanRelay로 실구동 (차이점은 파일 상단)
-  verify_E2E_v1.py      # BLE 단계 v1: 앱 "타겟 모드" write → tracking_core 축별 추적 루프
-                         # 시작/정지 연동 (--axis pan|tilt|pantilt). 부위별 스캔은 미포함(4단계 몫).
-config.py            # 전체 설정값 (CFG 딕셔너리)
-```
-
-## 실행
+## 설치
 
 ```bash
-pip install tflite-runtime opencv-python numpy
-python scripts/verify_movenet.py                                    # 로컬 창으로 확인
-python scripts/verify_movenet.py --no-window                        # 헤드리스
-python scripts/verify_movenet.py --web --no-window --web-port 8090  # http://<host>:8090/ 로 MJPEG 스트림
-python scripts/verify_movenet.py --opencv --cam 0                   # OpenCV/V4L2 캡처 강제 (개발 PC / USB 웹캠)
-python scripts/verify_movenet.py --rpicam                           # rpicam-vid 서브프로세스로 캡처 (picamera2 미설치 시)
-python scripts/verify_movenet.py --gray                             # 회색조 변환 후 추론 (색 정보 없는 조건 1차 확인)
-python scripts/verify_movenet.py --noir-sim                         # NoIR 야간 촬영 조건 근사 시뮬레이션 (실기 검증 대체 불가)
+# 1. 시스템 패키지
+sudo apt install -y bluez
+sudo apt install -y python3-picamera2          # CSI 카메라 (없으면 --rpicam / --opencv)
+
+# 2. 파이썬 의존성
+pip install -r requirements.txt
+pip install --pre bluez_peripheral             # ⚠ --pre 필수 (아래 주의)
+
+# 3. 모델 파일 — 레포에 포함되어 있지 않습니다
+#    Kaggle Models에서 multipose-lightning-tflite-float16 을 받아
+#    multipose_lightning.tflite 이름으로 레포 루트에 둘 것
+#    https://www.kaggle.com/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1
+
+# 4. lgpio 패치 — Pi에서 1회만 실행 (시스템 파일은 수정하지 않음)
+bash hardware/tools/patch_lgpio.sh
+
+# 5. 영점 잡기 — 손으로 헤드를 정면 중앙에 맞춘 뒤 한 번 실행
+python3 scripts/set_origin.py
 ```
 
-레포 루트에서 실행하세요. `multipose_lightning.tflite` 모델 파일이 레포 루트에 있어야 합니다 (레포에는 포함되어 있지 않음, [Kaggle Models](https://www.kaggle.com/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1)에서 별도 다운로드 필요).
+> **lgpio 패치가 왜 필요한가**: liblgpio의 송출 스레드가 특정 조건에서 `clock_nanosleep`
+> EINVAL을 무한 재시도하며 CPU를 100% 점유하고, **전 핀의 펄스 송출이 영구 정지**합니다
+> (실기 확인). 패치본을 `/usr/local/lib`에 설치해 로드 우선순위로 덮는 방식이라 시스템
+> 파일은 그대로이고, 사본을 지우면 원복됩니다 — [`docs/lgpio_patch.md`](docs/lgpio_patch.md).
 
-## 개발 단계
+> **`--pre` 주의**: `bluez_peripheral`의 PyPI 기본 stable은 0.1.7(2022)로 최신 BlueZ와
+> 동작하지 않습니다. 반드시 pre-release를 설치하세요.
 
-1. Pi 5 FPS 검증 (완료 — `scripts/verify_movenet.py`)
-2. 팬틸트 모터 제어 (현재 단계 — `scripts/verify_motor.py`, `scripts/verify_pantilt.py`,
-   잔여 항목은 `hardware/TODO.md`)
-3. BLE · 앱 연동 (진행 중 — `scripts/verify_ble.py`, 프로토콜 명세는
-   앱 저장소 `apps/ESW_BLE_app/docs/ble_protocol.md`가 기준).
-   `scripts/verify_E2E_v1.py --axis pan|tilt|pantilt`로 앱의 "타겟 모드"
-   write에 맞춰 해당 축 추적 루프를 시작/정지하는 v1 통합까지 진행
-   (부위 인식별 개별 조준은 4단계 `verify_fulltrack.py` 몫으로 남겨둠).
-4. 전체 통합 · 성능 지표 측정
+> **영점이 왜 필요한가**: 스테퍼는 오픈루프라 자기 위치를 스스로 알 수 없습니다.
+> 보낸 펄스 수를 파일(장부)에 기록해두고 재시작 시 그만큼 되돌아오는 방식이라,
+> 최초 한 번은 "지금 이 자리가 0°"라고 선언해줘야 합니다
+> (`hardware/position_store.py` 상단 참고).
 
-각 단계는 독립적으로 검증 가능하도록 모듈화합니다.
+모든 스크립트는 **레포 루트에서** 실행하세요 — `sys.path`를 스크립트가 직접 잡습니다.
+
+---
+
+## 저장소 구조
+
+```
+config.py                 모든 튜닝 상수 (CFG 딕셔너리) — 핀, FOV, 리밋, 구동 파라미터
+
+vision/                   순수 계산 — GPIO/BlueZ import 금지, 프레임/키포인트 in, 데이터 out
+  pose_estimator.py         MoveNetMultiPoseDetector: 프레임 → 검출된 전원의 키포인트 +
+                            부위(머리·상체·하체) 중심 좌표
+  target_selector.py        다중 인원 중 bbox 면적 최대 1인 선정.
+                            히스테리시스 포함 — 면적이 비슷하면 기존 대상자 유지(깜빡임 방지)
+  pose_tracker.py           부위 중심 좌표 EMA 스무딩 + 부위별 miss 판정.
+                            대상 교체·재획득 시에는 EMA 없이 즉시 점프(허공을 훑지 않도록)
+
+control/                  순수 계산 — GPIO/BlueZ import 금지
+  control_signal_generator.py  좌표 → 팬/틸트 각도, 데드존, 거리 추정
+  fullbody_scenario.py         전신(머리→발) 시나리오 상태기계:
+                               스캔 → 웨이포인트 순찰 → 이동 재획득, 가림·틸트 리밋 처리
+  body_wind.py                 부위 모드 보조: 순찰 경로 필터(세기 0인 부위 제외),
+                               풍속 중재, 이동 감지 게이트, 부위별 조준각 벌리기
+  recognition_reporter.py      객체 인식 notify를 언제 보낼지 판정 — 시간 창 안의
+                               검출 비율로 경계 상황의 깜빡임을 흡수
+
+hardware/                 하드웨어 호출 전용 — 계산 결과를 GPIO로 내보내기만 함
+  motor_controller.py       팬틸트 스테퍼 구동. 논블로킹(축별 워커 스레드, 최신 목표 선점),
+                            위치 저장/복원, lgpio 펄스 스레드 RT 승격 대책 포함
+  relay_controller.py       선풍기 풍속 릴레이(TS0011) 구동. 논블로킹,
+                            break-before-make(전부 오픈 → guard → 하나만 닫기)
+  position_store.py         장부 위치(스텝)를 파일에 저장/복원 — 파일 I/O 전용
+  tools/patch_lgpio.sh      liblgpio EINVAL 무한 스핀 패치 (Pi에서 1회 실행 —
+                            적용하지 않으면 펄스 송출이 영구 정지할 수 있음)
+
+main.py                   진입점 — BLE 서비스 + 부위 모드 러너 + 전체 상태기계
+app/                      진입점이 쓰는 실행 모듈 (아래 표 참고)
+scripts/set_origin.py     최초 1회 영점 설정
+docs/                     프로토콜·알고리즘·실측 문서 (아래 표 참고)
+```
+
+---
+
+## 실행 파일 구성
+
+동작에 **실제로 필요한 파일만** 두었습니다. 개발 과정에서 단계별로 쓴 단독 검증
+스크립트(모터 단독 구동, 축별 추적, 릴레이 극성 확인, 펄스 지터 계측 등)는 실행에
+필요하지 않아 제외했습니다 — `main` 브랜치에 그대로 있습니다.
+
+> 이 브랜치(`submission`)에는 실행에 필요한 파일만 있습니다. 단계별 검증 스크립트를
+> 포함한 전체 개발 이력은 `main` 브랜치에 있습니다.
+
+```
+main.py                 ← 진입점. BLE 서비스, 부위 모드 러너, 전체 상태기계
+app/
+ ├── ble_service.py        모드 감독, 풍속 릴레이 연동, 전원 게이팅, 회전·원점복귀 러너
+ │    └── ble_protocol.py    BLE 프로토콜 상수(UUID·모드·풍량), GATT 서버 부팅, 추적 러너
+ ├── fullbody_tracking.py  전신(머리→발) 추적 루프, 화면 오버레이
+ ├── tracking.py           팬/틸트 닫힌 루프 본문, 모터 핸들 열기, 상태파일 인자
+ └── camera.py             카메라 백엔드 3종(picamera2 / rpicam-vid / OpenCV),
+                           MJPEG 웹스트림, 포즈 시각화
+scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
+```
+
+| 파일 | 역할 |
+|---|---|
+| **`main.py`** | **진입점.** STATUS 실구현(read 스냅샷 + notify 에코백), 요청/유효 모드 분리, 부위 모드(순찰 ↔ 추적 폴백) |
+| `app/ble_service.py` | 모드 감독(`_ModeSupervisor`), 풍속 릴레이 실구동, 전원 게이팅, 연결 끊김 처리 |
+| `app/ble_protocol.py` | BLE UUID·모드·풍량 상수, GATT 서버 부팅, 타겟 모드 → 추적 러너 |
+| `app/fullbody_tracking.py` | 전신 추적 루프와 화면 오버레이 |
+| `app/tracking.py` | 팬/틸트 닫힌 루프 본문, 모터 핸들 열기 |
+| `app/camera.py` | 카메라 캡처 백엔드, MJPEG 웹스트림, 포즈 시각화 |
+| `scripts/set_origin.py` | 최초 1회 영점 설정 — [설치](#설치) 5번 |
+
+`app/`의 모듈들은 개발 과정에서 각각 `verify_E2E_v1/v2`, `verify_fulltrack`,
+`tracking_core`, `verify_movenet`이라는 이름의 검증 스크립트로 시작해, 기능이 확정되면서
+상위 단계가 그대로 import해 쓰는 모듈이 된 것들입니다. **각 파일 상단 docstring에는
+이전 버전과의 차이만** 기록해 두었으니, 개발이 어떤 순서로 쌓였는지는 그 docstring들을
+`ble_protocol → ble_service → main` 순서로 읽으면 됩니다.
+
+---
+
+## 문서
+
+| 문서 | 내용 |
+|---|---|
+| [`docs/ble_protocol.md`](docs/ble_protocol.md) | BLE UUID·바이트 형식·상태 동기화 계약 (RPi 구현 기준) |
+| [`docs/lgpio_patch.md`](docs/lgpio_patch.md) | 부하 시 모터 소음 문제 — 배제한 가설 8종, 원인, 채택한 대책 |
+| [`docs/angle_calibration.md`](docs/angle_calibration.md) | 각도 오차의 원인(기어비·백래시·탈조·원점)을 가르는 실험 순서와 보정식 |
+| [`docs/measurements/pulse_jitter.md`](docs/measurements/pulse_jitter.md) | 펄스 스레드 지터 실측표 — RT 승격 대책의 근거 |
+| [`docs/hardware_todo.md`](docs/hardware_todo.md) | 하드웨어 잔여 결정·실기 검증 항목 |
+
+**구현 전에 알고리즘을 문서로 정리하고, 코드가 바뀌면 문서도 함께 갱신합니다.**
+
+---
 
 ## 아키텍처 원칙
 
-**계산 로직과 하드웨어 호출을 절대 같은 함수에 섞지 않습니다.**
+### 계산 로직과 하드웨어 호출을 절대 같은 함수에 섞지 않는다
 
-- **계산 전용 모듈** (GPIO/BlueZ 등 하드웨어 라이브러리 import 금지, 입력은 프레임/키포인트,
-  출력은 각도·신호값 등 순수 데이터): 포즈 추정, 부위 판별, 대상자 선정, 제어 신호 생성.
-  지금은 `vision/pose_estimator.py`, `vision/target_selector.py`, `vision/pose_tracker.py`,
-  `control/control_signal_generator.py`가 이 원칙을 따릅니다.
-- **하드웨어 호출 전용 모듈** (계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만 함):
-  릴레이 제어, 모터 제어, BLE 서버. `hardware/motor_controller.py`(팬틸트 스테퍼)와
-  `hardware/relay_controller.py`(풍속 릴레이 — 2026-08-04 배선 확정, 물리버튼 없이
-  릴레이 직접 탭 단속)는 lgpio 기반 논블로킹 구현이 완료됐습니다 (핀·파라미터는
-  `config.py`, 실측 잔여는 `hardware/TODO.md`). BLE 서버는 현재 scripts/ 검증
-  단계이며(`verify_ble_v2.py`), 4단계 통합 시 상위 통합부가 gpiochip 핸들을 한 번
-  열어 모터/릴레이에 공유합니다.
-- 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`처럼 순수 함수로 각도를 계산하고,
-  `motor_controller.move_to(angle)`이 실제 GPIO 호출을 전담합니다. 이렇게 분리해두면
-  모터 드라이버를 바꾸거나 계산 버그를 찾을 때 서로 영향 없이 수정·검증할 수 있습니다.
+이 레포의 타협하지 않는 규칙입니다.
 
-카메라 캡처·추론·모터 제어·BLE는 동시에 동작하므로 스레딩/멀티프로세싱 구조를 처음부터
-설계합니다 (`scripts/verify_movenet.py`의 웹스트림 모드가 캡처/추론 스레드 + HTTP 서버
-스레드 분리 예시입니다).
+- **계산 전용 모듈** — GPIO/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
+  입력은 프레임/키포인트, 출력은 각도·신호값 같은 순수 데이터입니다.
+  `vision/` 전체와 `control/` 전체가 여기 해당합니다.
+- **하드웨어 호출 전용 모듈** — 계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만
+  하고, 계산을 하지 않습니다. `hardware/` 전체가 여기 해당합니다.
+- 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`은 순수 함수이고,
+  실제 GPIO 호출은 `motor_controller.move_to(angle)`이 전담합니다.
 
-구현 전 알고리즘을 문서로 정리하고, 코드 변경 시 문서도 함께 갱신합니다.
+이렇게 분리하면 **모터 드라이버를 교체하거나 계산 버그를 찾을 때 서로 영향 없이**
+수정·검증할 수 있습니다. 실제로 이 구조 덕분에 3단계 추적 루프를 그대로 둔 채
+4단계 BLE 통합을 얹을 수 있었습니다 (`tracking_core.py` 재사용).
+
+### 동시성
+
+카메라 캡처 · 추론 · 모터 제어 · BLE가 모두 동시에 동작합니다. 스레딩을 나중에 얹지 않고
+처음부터 설계했습니다 — 모터/릴레이는 논블로킹 워커 스레드를 갖고, BLE는 asyncio 루프에서
+돌며, 러너 스레드는 `loop.call_soon_threadsafe()`로만 BLE에 보고합니다
+(`dbus_fast`가 스레드 안전하지 않기 때문).
+
+---
 
 ## 성능 목표
 
-- 추론 FPS: 목표 20fps (팀 목표치, 추후 변경 가능) — 모델을 바꾸면(예: 싱글포즈 → 멀티포즈)
-  반드시 다시 측정할 것. 한 모델에서 잰 수치가 다른 모델에도 그대로 적용되는 건 아님
-- 전체 시스템 응답 시간 < 0.5s
-- 객체 인식 mAP ≥ 66%
-- 부위 전환 정확도 ≥ 90%
-- BLE 제어 응답 < 0.2s (지연 측정 로직 포함 필요)
-- 동작 소음 < 35dB
-- 모터 위치 정확도 < 2°
+| 항목 | 목표 |
+|---|---|
+| 추론 FPS | 20 fps |
+| 전체 시스템 응답 시간 | < 0.5 s |
+| 객체 인식 mAP | ≥ 66% |
+| 부위 전환 정확도 | ≥ 90% |
+| BLE 제어 응답 | < 0.2 s |
+| 동작 소음 | < 35 dB |
+| 모터 위치 정확도 | < 2° |
 
-성능 목표에 영향을 주는 파이프라인 단계(추론, 모터 이동, BLE 왕복 등)를 추가할 때는
-`scripts/verify_movenet.py`의 FPS 로깅 패턴(`fps_hist`, 초당 콘솔 로그)처럼 측정 코드를
-함께 포함합니다.
+목표에 영향을 주는 파이프라인 단계(추론·모터 이동·BLE 왕복)를 추가할 때는
+`verify_movenet.py`의 FPS 로깅 패턴(`fps_hist`, 초당 콘솔 로그)처럼 **측정 코드를
+함께 넣습니다.** 주장이 아니라 코드로 잴 수 있어야 합니다.

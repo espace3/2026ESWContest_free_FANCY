@@ -50,13 +50,13 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
 
   - 펄스 타이밍: lgpio 펄스 스레드는 소프트웨어 타이밍이라 CPU 경쟁에 선점당하면
     스텝 간격이 흔들린다(추적 중 달그락 소음의 원인). open_chip()이 그 스레드만
-    전용 코어 + RT로 격리한다 — 원리·실측·확인법은 hardware/lgpio_patch.md.
+    전용 코어 + RT로 격리한다 — 원리·실측·확인법은 docs/lgpio_patch.md.
     timing=True(스크립트 --timing)로 이동 구간마다 드리프트·언더런을 찍어 재검증할 수
     있다. 언더런이 0이 아니면 펄스가 실제로 끊긴 것이다.
 
-TODO — 남은 미결 (hardware/TODO.md 참고):
+TODO — 남은 미결 (docs/hardware_todo.md 참고):
   - 각도 정확도: 오차원(기어비·백래시·탈조·원점)을 가르는 실험 순서와 보정 위치는
-    hardware/angle_calibration.md. 백래시 보정을 넣을 때는 그 스텝을 장부에
+    docs/angle_calibration.md. 백래시 보정을 넣을 때는 그 스텝을 장부에
     반영하면 안 된다 (헛도는 구간이라 출력축이 안 움직인다).
   - DIR 값 ↔ 각도 부호 매핑 실기 확인 (config stepper.*.dir_for_positive)
   - 호밍: 리밋 스위치/엔코더 도입 여부 미결. 그 전까지는 위 장부 영속화가
@@ -109,7 +109,7 @@ def open_chip(*, pin_pulse_core: bool = True, rt: bool = True) -> int:
 
     추적 중 달그락 소음의 원인은 lgpio의 펄스 생성 스레드가 CPU 경쟁에 선점당해
     스텝 간격이 흔들리는 것이다 (실측: 부하 시 펄스 열이 3~7% 늘어짐,
-    hardware/lgpio_patch.md). 그 스레드가 TFLite·카메라와 코어를 다투지 않게 한다.
+    docs/lgpio_patch.md). 그 스레드가 TFLite·카메라와 코어를 다투지 않게 한다.
 
     스레드는 **만든 쪽의 어피니티 마스크를 물려받는다.** 그래서 tid를 알아낼
     필요 없이 순서만으로 격리된다:

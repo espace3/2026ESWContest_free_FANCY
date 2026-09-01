@@ -1,0 +1,26 @@
+# 팀 FANCY — AI 스마트 타겟 선풍기 (Raspberry Pi 5, Python 3.11.15)
+# 설치:  pip install -r requirements.txt
+
+# ── 추론 · 영상 (모든 환경 공통) ──────────────────────────────────────────────
+tflite-runtime            # MoveNet MultiPose Lightning 실행. 미설치 시 코드가
+                          # tensorflow.lite로 폴백하지만 Pi에서는 이쪽을 쓸 것
+opencv-python             # 프레임 처리 · 시각화
+numpy
+
+# ── 하드웨어 (Raspberry Pi 전용 — 개발 PC에서는 --dry-run으로 생략 가능) ─────
+lgpio                     # 스테퍼 펄스 · 릴레이 GPIO.
+                          # Pi 5는 pigpio(DMA 타이밍) 미지원이라 lgpio만 가능
+                          # (펄스 스레드 지터 대책은 docs/lgpio_patch.md 참고)
+
+# ── BLE (Raspberry Pi 전용) ──────────────────────────────────────────────────
+# ⚠ --pre 필수: PyPI 기본 stable(0.1.7, 2022)은 최신 BlueZ와 동작하지 않는다.
+#    pip install --pre bluez_peripheral
+bluez_peripheral          # GATT 서버 (순수 파이썬, dbus_fast 기반)
+# dbus_fast               ← bluez_peripheral이 함께 설치한다
+
+# ── 시스템 패키지 (pip 아님) ────────────────────────────────────────────────
+# sudo apt install -y bluez              # BlueZ 데몬 (Pi OS 기본 포함)
+# sudo apt install -y python3-picamera2  # CSI 카메라. 없으면 --rpicam / --opencv 사용
+
+# ── 모델 파일 (레포에 미포함) ───────────────────────────────────────────────
+# multipose_lightning.tflite 를 레포 루트에 둘 것 — README "설치" 절 참고

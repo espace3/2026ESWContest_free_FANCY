@@ -1,9 +1,14 @@
 # lgpio 펄스 타이밍 — 부하 시 지터/탈조 문제
 
+> **참고**: 이 문서가 언급하는 계측·단독 검증 스크립트(`verify_motor.py`,
+> `verify_track_*.py`, `verify_pulse_jitter.py`, `hold_enable.py` 등)는 실행에 필요하지
+> 않아 **제출본에 포함되어 있지 않습니다.** 개발 브랜치(`main`)에 있으며, 재측정이
+> 필요할 때 가져와 쓰면 됩니다.
+
 **상태: 해결 (2026-08-07). 대책은 `hardware/motor_controller.py`의 `open_chip()` 안에 있다.**
 
 Pi 5에서 스테퍼 펄스를 lgpio로 만들 때 생기는 타이밍 문제를 한 곳에 모아둔 문서.
-`hardware/TODO.md`의 "tilt f_max 실효값 확정" 항목이 여기를 참조한다.
+`docs/hardware_todo.md`의 "tilt f_max 실효값 확정" 항목이 여기를 참조한다.
 
 > ⚠ 이 파일은 원래 2026-07-16에 작성됐다가 유실됐고(레포에 없는 채로 TODO.md에서만
 > 참조되고 있었다), 2026-08-07에 재작성됐다. 당시 "적용했다"던 RT 패치는 절차도
@@ -36,7 +41,7 @@ Pi 5는 pigpio(DMA 기반 하드웨어 타이밍)를 쓸 수 없어 lgpio만 선
 
 ### 증상
 
-카메라 추적(`verify_track_*`, `verify_fulltrack`, `verify_E2E_v1`)을 돌리면 모터에서
+카메라 추적(`verify_track_*`, `app/fullbody_tracking.py`, `main.py`)을 돌리면 모터에서
 달그락거리는 소리가 난다. `verify_motor.py` 단독 구동은 어떤 조건(긴 이동/왕복/잔이동/
 넓은 범위)에서도 조용하다. 소리는 **모터가 실제로 도는 동안에만** 난다.
 

@@ -1,5 +1,6 @@
 """
-scripts/verify_movenet.py - MoveNet MultiPose Lightning 포즈 감지 확인용 스크립트
+app/camera.py - 카메라 백엔드 · 포즈 시각화 · MJPEG 웹스트림
+(개발 이력상 verify_movenet.py)
 
 이 파일은 계산 로직을 포함하지 않습니다. 실제 추정/선정/추적 로직은
 vision/pose_estimator.py, vision/target_selector.py, vision/pose_tracker.py에
@@ -13,9 +14,9 @@ vision/pose_estimator.py, vision/target_selector.py, vision/pose_tracker.py에
 모델: multipose_lightning.tflite (MoveNet MultiPose Lightning, 최대 6명 동시 검출)
 
 실행 (레포 루트에서):
-    python scripts/verify_movenet.py
-    python scripts/verify_movenet.py --no-window
-    python scripts/verify_movenet.py --web --no-window --web-port 8090
+    python app/camera.py
+    python app/camera.py --no-window
+    python app/camera.py --web --no-window --web-port 8090
 """
 
 from __future__ import annotations
@@ -516,7 +517,7 @@ def main():
     empty_regions = {k: {"cx": 0.5, "cy": 0.5, "visible": False}
                       for k in ("head", "upper", "lower")}
 
-    print("\n[verify_movenet] 시작! 키: q=종료 s=스크린샷\n")
+    print("\n[camera] 시작! 키: q=종료 s=스크린샷\n")
 
     try:
         while True:
@@ -631,7 +632,7 @@ def main():
                 time.sleep(max(0, 0.02 - (time.time() - t0)))
 
     except KeyboardInterrupt:
-        print("\n[verify_movenet] Ctrl+C 중단")
+        print("\n[camera] Ctrl+C 중단")
     finally:
         # q 종료·Ctrl+C·예외 어느 경로로 빠져도 카메라/웹서버를 반드시 정리한다
         # (--no-window 헤드리스 모드는 Ctrl+C가 유일한 종료 수단이라 특히 중요)
@@ -639,7 +640,7 @@ def main():
             web_srv.shutdown(); web_srv.server_close()
         _release_camera(cam, backend)
         cv2.destroyAllWindows()
-        print("\n[verify_movenet] 종료")
+        print("\n[camera] 종료")
 
 
 if __name__ == "__main__":

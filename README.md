@@ -135,27 +135,27 @@ python3 app/camera.py --web --no-window     # http://<호스트>:8090/
 main.py                   실행 파일 — BLE 서비스, 전체 조립
 config.py                 튜닝값 전부 + BLE 프로토콜 상수
 
-vision/                   순수 계산 — GPIO·BlueZ import 금지
+vision/                   영상 분석 — 사람을 찾고 어디를 겨눌지 좌표로 낸다
  ├── pose_estimate.py     MoveNet 추론 → 키포인트·bbox·부위 3지점
  ├── target_select.py     여러 명 중 대상 1인 선정
  └── region_filter.py     부위 좌표 EMA + 미검출 판정
 
-control/                  순수 계산 — GPIO·BlueZ import 금지
+control/                  제어 로직 — 좌표를 각도로 바꾸고 순찰·풍속을 정한다
  ├── control_signal.py    좌표 → 팬·틸트 각도, 소프트 리밋, 데드존
  ├── region_patrol.py     부위 순찰 상태기계, 풍속 중재, 폴백 판정
  └── recognition_report.py  인식 notify 를 언제 보낼지 판정
 
-hardware/                 구동 전용 — 계산하지 않음
+hardware/                 하드웨어 구동 — 모터와 릴레이를 실제로 움직인다
  ├── stepper.py           팬틸트 스테퍼 (논블로킹, 가감속, 위치 복원)
  ├── relay.py             풍속 릴레이 (break-before-make)
  └── position_store.py    위치 장부 파일 저장·복원
 
-app/                      입출력·조립
+app/                      실행 계층 — 카메라·추적 루프와 모드별 동작
  ├── runners.py           모드별 러너 4종 + 모드 감독
  ├── tracking.py          팬·틸트 닫힌 루프 본문, 조준점, 오버레이
  └── camera.py            카메라 백엔드 3종, 시각화, 웹스트림 (단독 실행 가능)
 
-tools/                    단독 실행 도구
+tools/                    설치·실측용 단독 실행 도구
  ├── set_origin.py        영점 설정 (설치 5번)
  ├── patch_lgpio.sh       lgpio 패치 (설치 4번)
  ├── drive_motor.py       모터 단독 구동 — 각도·타이밍 실측
@@ -165,8 +165,8 @@ tools/                    단독 실행 도구
 docs/                     프로토콜 · 제어 원리 · 문제 해결 기록
 ```
 
-설계 근거는 각 파일 상단 docstring에 있습니다. 실행할 수 있는 파일은 `main.py`(전체)와
-`app/camera.py`(카메라·인식만) 둘입니다.
+실행할 수 있는 파일은 `main.py`(전체)와 `app/camera.py`(카메라·인식만) 둘이고,
+각 파일의 설계 근거는 상단 docstring에 있습니다.
 
 ---
 

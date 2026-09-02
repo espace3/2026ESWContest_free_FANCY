@@ -6,7 +6,7 @@
 > 둘이 어긋나면 앱 저장소의 명세가 우선이며, 이 문서와 코드를 함께 고친다.
 
 - 역할: **RPi = Peripheral(GATT 서버)**, 앱 = Central
-- 광고 이름: `ESW-FAN`
+- Advertising 이름(앱에서 검색되는 이름): `ESW-FAN`
 - 스택: BlueZ 5.x + `bluez_peripheral`(dbus_fast)
 
 ## 1. UUID

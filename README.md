@@ -106,7 +106,7 @@ python3 tools/set_origin.py
 
 ### 실행
 
-전체 기능(BLE + 추적 + 부위별 풍속)이 통합된 **진입점은 `main.py`** 하나입니다.
+전체 기능(BLE + 추적 + 부위별 풍속)은 **`main.py` 하나로 돌아갑니다.**
 
 ```bash
 # Raspberry Pi 5 — 레포 루트에서
@@ -119,7 +119,7 @@ python3 main.py --axis pantilt
 python3 main.py --axis pan --dry-run --opencv
 ```
 
-실행하면 `ESW-FAN`으로 광고를 시작하고, 앱이 연결해 모드/전원/풍량을 보내면 동작합니다.
+실행하면 앱에서 `ESW-FAN`으로 검색됩니다. 연결한 뒤 모드·전원·풍량을 보내면 동작합니다.
 
 카메라와 인식만 따로 확인하려면 모터·BLE 없이 돌릴 수 있습니다.
 
@@ -132,22 +132,41 @@ python3 app/camera.py --web --no-window     # http://<호스트>:8090/
 ## 저장소 구조
 
 ```
-main.py        진입점 — BLE GATT 서비스, 전체 조립
-config.py      튜닝값 전부 + BLE 프로토콜 상수(앱과 공유하는 계약)
+main.py                   실행 파일 — BLE 서비스, 전체 조립
+config.py                 튜닝값 전부 + BLE 프로토콜 상수
 
-vision/        순수 계산 — 포즈 추정, 대상 1인 선정, 좌표 안정화
-control/       순수 계산 — 좌표→각도, 부위 순찰 시나리오, 풍속 중재
-hardware/      구동 전용 — 스테퍼, 릴레이, 위치 저장
-app/           입출력·조립 — 러너와 모드 감독, 추적 루프, 카메라
-tools/         단독 실행 도구 — 영점 설정, lgpio 패치, 실측 3종
-docs/          프로토콜·제어 원리·문제 해결 기록
+vision/                   순수 계산 — GPIO·BlueZ import 금지
+ ├── pose_estimate.py     MoveNet 추론 → 키포인트·bbox·부위 3지점
+ ├── target_select.py     여러 명 중 대상 1인 선정
+ └── region_filter.py     부위 좌표 EMA + 미검출 판정
+
+control/                  순수 계산 — GPIO·BlueZ import 금지
+ ├── control_signal.py    좌표 → 팬·틸트 각도, 소프트 리밋, 데드존
+ ├── region_patrol.py     부위 순찰 상태기계, 풍속 중재, 폴백 판정
+ └── recognition_report.py  인식 notify 를 언제 보낼지 판정
+
+hardware/                 구동 전용 — 계산하지 않음
+ ├── stepper.py           팬틸트 스테퍼 (논블로킹, 가감속, 위치 복원)
+ ├── relay.py             풍속 릴레이 (break-before-make)
+ └── position_store.py    위치 장부 파일 저장·복원
+
+app/                      입출력·조립
+ ├── runners.py           모드별 러너 4종 + 모드 감독
+ ├── tracking.py          팬·틸트 닫힌 루프 본문, 조준점, 오버레이
+ └── camera.py            카메라 백엔드 3종, 시각화, 웹스트림 (단독 실행 가능)
+
+tools/                    단독 실행 도구
+ ├── set_origin.py        영점 설정 (설치 5번)
+ ├── patch_lgpio.sh       lgpio 패치 (설치 4번)
+ ├── drive_motor.py       모터 단독 구동 — 각도·타이밍 실측
+ ├── measure_jitter.py    펄스 스레드 지터 측정
+ └── enable_hold.py       EN 유지 — 백래시 손측정
+
+docs/                     프로토콜 · 제어 원리 · 문제 해결 기록
 ```
 
-`vision/`과 `control/`은 GPIO를 import하지 않고, `hardware/`는 계산하지 않습니다
-(아래 [아키텍처 원칙](#아키텍처-원칙)). 각 파일의 역할과 설계 근거는 파일 상단
-docstring에 있습니다.
-
-**실행 가능한 진입점은 둘**입니다 — `main.py`(전체)와 `app/camera.py`(카메라·인식만).
+설계 근거는 각 파일 상단 docstring에 있습니다. 실행할 수 있는 파일은 `main.py`(전체)와
+`app/camera.py`(카메라·인식만) 둘입니다.
 
 ---
 

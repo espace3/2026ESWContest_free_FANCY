@@ -91,27 +91,18 @@ pip install --pre bluez_peripheral             # ⚠ --pre 필수 (아래 주의
 #    multipose_lightning.tflite 이름으로 레포 루트에 둘 것
 #    https://www.kaggle.com/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1
 
-# 4. lgpio 패치 — Pi에서 1회만 실행 (시스템 파일은 수정하지 않음)
+# 4. lgpio 패치 — Pi에서 1회만 실행 (빼먹으면 모터가 도중에 영구 정지합니다)
 bash tools/patch_lgpio.sh
 
 # 5. 영점 잡기 — 손으로 헤드를 정면 중앙에 맞춘 뒤 한 번 실행
+#    (스테퍼는 오픈루프라 "지금 이 자리가 0°"를 한 번 선언해줘야 한다)
 python3 tools/set_origin.py
 ```
-
-> **lgpio 패치가 왜 필요한가**: liblgpio의 송출 스레드가 특정 조건에서 `clock_nanosleep`
-> EINVAL을 무한 재시도하며 CPU를 100% 점유하고, **전 핀의 펄스 송출이 영구 정지**합니다
-> (실기 확인). 패치본을 `/usr/local/lib`에 설치해 로드 우선순위로 덮는 방식이라 시스템
-> 파일은 그대로이고, 사본을 지우면 원복됩니다 — [`docs/lgpio_patch.md`](docs/lgpio_patch.md).
 
 > **`--pre` 주의**: `bluez_peripheral`의 PyPI 기본 stable은 0.1.7(2022)로 최신 BlueZ와
 > 동작하지 않습니다. 반드시 pre-release를 설치하세요.
 
-> **영점이 왜 필요한가**: 스테퍼는 오픈루프라 자기 위치를 스스로 알 수 없습니다.
-> 보낸 펄스 수를 파일(장부)에 기록해두고 재시작 시 그만큼 되돌아오는 방식이라,
-> 최초 한 번은 "지금 이 자리가 0°"라고 선언해줘야 합니다
-> (`hardware/position_store.py` 상단 참고).
-
-모든 스크립트는 **레포 루트에서** 실행하세요 — `sys.path`를 스크립트가 직접 잡습니다.
+모든 명령은 **레포 루트에서** 실행합니다.
 
 ### 실행
 
@@ -141,84 +132,22 @@ python3 app/camera.py --web --no-window     # http://<호스트>:8090/
 ## 저장소 구조
 
 ```
-main.py                    진입점. GATT 서비스(EswFanService) · BLE 부팅 · 전체 조립
-config.py                  튜닝값 전부(카메라·화각·핀·릴레이·스테퍼·리밋·추적)
-                           + BLE 프로토콜 상수(UUID·모드·풍량 — 앱과 공유하는 계약)
+main.py        진입점 — BLE GATT 서비스, 전체 조립
+config.py      튜닝값 전부 + BLE 프로토콜 상수(앱과 공유하는 계약)
 
-vision/                    순수 계산 — 프레임 in, 좌표 out. GPIO·BlueZ import 금지
- ├── pose_estimate.py      MoveNet MultiPose Lightning 추론. BGR 프레임 → 최대 6인의
- │                         17 키포인트 + bbox + 부위(머리/상체/하체) 중심
- ├── target_select.py      다중 인원 중 추적 대상 1인 선정 — 직전 대상이 근처에 있으면
- │                         유지, 없으면 화면 중앙 최근접 (bbox 중심 기준)
- └── region_filter.py      선정된 1인의 부위 좌표 안정화 — EMA 스무딩 + 부위별 miss
-                           카운트. 재획득 시엔 섞지 않고 즉시 점프(허공을 훑지 않도록)
-
-control/                   순수 계산 — 좌표 in, 각도·판정 out. GPIO·BlueZ·카메라 없음
- ├── control_signal.py     좌표 → 팬/틸트 각도, 소프트 리밋 clamp,
- │                         데드존(포즈 잡음이 모터로 새는 것 차단)
- ├── region_patrol.py      부위 모드 전체. RegionPatrolScenario(한 프레임 매핑 →
- │                         시간 슬롯 순찰 → 재조준·탐색 상태기계),
- │                         region_wind_level(풍속 중재), MotionGate(폴백 전환 판정)
- └── recognition_report.py 객체 인식 notify를 언제 보낼지 판정 — 시간 창 안의 검출
-                           비율로 경계 상황의 깜빡임을 흡수
-
-hardware/                  하드웨어 구동과 그 상태 관리 — 계산하지 않음
- ├── stepper.py            팬틸트 스테퍼 구동. 논블로킹(축별 워커 스레드, 최신 목표
- │                         선점), 사다리꼴 가감속, 위치 저장·복원, lgpio 펄스 스레드
- │                         RT 승격 대책. ⚠ tools/patch_lgpio.sh 적용이 전제
- ├── relay.py              선풍기 풍속 릴레이(TS0011) 구동. 논블로킹,
- │                         break-before-make(전부 오픈 → guard → 하나만 닫기)
- └── position_store.py     장부 위치(정수 스텝)를 파일에 저장·복원 — 오픈루프
-                           스테퍼가 절대 위치를 못 재는 것에 대한 방편
-
-app/                       입출력·조립 계층 — 위 모듈들을 실제 장치에 연결
- ├── runners.py            모드별 러너 팩토리 4종(추적·부위·회전·복귀)과
- │                         ModeSupervisor(전원·모드·풍속 → 러너 선택, 스레드 교대),
- │                         BLE 연결 끊김 감지
- ├── tracking.py           팬/틸트 닫힌 루프 본문(run_tracking), 조준점 계산
- │                         (chest_point), 오버레이, 모터 핸들 열기, --dry-run 스텁
- └── camera.py             카메라 백엔드 3종(picamera2 / rpicam-vid / OpenCV),
-                           재시도 오픈, 포즈 시각화, MJPEG 웹스트림, cv2 창 스레드
-                           ※ 단독 실행 가능 — 모터·BLE 없이 인식만 확인
-
-tools/                     단독 실행 도구 — 운용 루프 밖에서 한 번씩 쓴다
- ├── set_origin.py         최초 1회 영점 설정 (설치 5번)
- ├── patch_lgpio.sh        liblgpio EINVAL 무한 스핀 패치 (설치 4번)
- ├── drive_motor.py        모터 단독 구동 — 각도 캘리브레이션 · 펄스 타이밍 실측
- ├── measure_jitter.py     펄스 스레드 웨이크업 지터 측정 (모터·배선 불필요)
- └── enable_hold.py        EN을 켠 채 대기 — 기어 유격(백래시) 손측정용
-
-docs/                      프로토콜 · 제어 원리 · 문제 해결 기록 (아래 표)
+vision/        순수 계산 — 포즈 추정, 대상 1인 선정, 좌표 안정화
+control/       순수 계산 — 좌표→각도, 부위 순찰 시나리오, 풍속 중재
+hardware/      구동 전용 — 스테퍼, 릴레이, 위치 저장
+app/           입출력·조립 — 러너와 모드 감독, 추적 루프, 카메라
+tools/         단독 실행 도구 — 영점 설정, lgpio 패치, 실측 3종
+docs/          프로토콜·제어 원리·문제 해결 기록
 ```
 
----
+`vision/`과 `control/`은 GPIO를 import하지 않고, `hardware/`는 계산하지 않습니다
+(아래 [아키텍처 원칙](#아키텍처-원칙)). 각 파일의 역할과 설계 근거는 파일 상단
+docstring에 있습니다.
 
-## 왜 이 파일들만 있는가
-
-**운용에 필요한 것**과 **`docs/`의 실험 절차를 실행하는 데 필요한 것**만 두었습니다.
-개발 과정에서 기능 단위로 쓴 단독 검증 스크립트(축별 추적, 릴레이 극성 확인, BLE
-연동 등)는 그 기능이 `main.py`로 흡수되어 제외했습니다 — `main` 브랜치에 있습니다.
-
-`app/`의 모듈들은 그 검증 스크립트로 시작해, 기능이 확정되면서 상위 단계가 import해
-쓰는 라이브러리가 된 것들입니다. 그래서 한동안 파일이 개발 순서대로 나뉘어 있었고 같은
-역할의 코드가 여러 파일에 흩어져 있었는데, 제출 전에 **책임 기준으로 다시 묶고** 단계별
-진입점은 제거했습니다 — 안 도는 코드가 남아 있으면 읽는 쪽이 매번 "이게 실제로
-실행되나"를 확인해야 하기 때문입니다. 그 단계별 코드는 git 이력에 있습니다.
-
-**실행 가능한 진입점은 둘입니다.**
-
-| | 무엇 |
-|---|---|
-| `main.py` | 전체 시스템 (BLE + 추적 + 부위별 풍속) |
-| `app/camera.py` | 카메라·인식만 — 모터·BLE 없이 확인 |
-
-`tools/`의 다섯 개는 설치 절차와 `docs/`의 실험 절차에서 한 번씩 부릅니다.
-
-| 실측 도구 | 무엇을 재나 | 관련 문서 |
-|---|---|---|
-| `drive_motor.py` | 모터 단독 구동 — 각도 누적 오차, 백래시, 짧은 이동 한계, 펄스 타이밍(`--timing`) | [`angle_calibration.md`](docs/angle_calibration.md) · [`lgpio_patch.md`](docs/lgpio_patch.md) |
-| `measure_jitter.py` | 펄스 스레드 웨이크업 지터 (모터·배선 불필요) | [`lgpio_patch.md`](docs/lgpio_patch.md) · [`pulse_jitter_data.md`](docs/pulse_jitter_data.md) |
-| `enable_hold.py` | EN을 켠 채 대기 — 기어 유격(백래시) 손측정용 | [`angle_calibration.md`](docs/angle_calibration.md) |
+**실행 가능한 진입점은 둘**입니다 — `main.py`(전체)와 `app/camera.py`(카메라·인식만).
 
 ---
 
@@ -245,36 +174,21 @@ docs/                      프로토콜 · 제어 원리 · 문제 해결 기록
 | 틸트 가동 범위 | −25° ~ **+15°** | +15°는 기구 파손 한계 (실측 확정, 초과 금지) |
 | 드라이버 VREF | 양축 0.7 V | 1.1/1.3V에서 두 축 동시 구동 시 팬 정지 → 0.7V로 해결 |
 
-목표에 영향을 주는 파이프라인 단계(추론·모터 이동·BLE 왕복)를 추가할 때는
-`app/camera.py`의 FPS 로깅 패턴(`fps_hist`, 초당 콘솔 로그)처럼 **측정 코드를
-함께 넣습니다.** 주장이 아니라 코드로 잴 수 있어야 합니다.
+측정은 주장이 아니라 코드로 합니다 — FPS는 `app/camera.py`의 `fps_hist`가,
+펄스 타이밍은 `--timing`이 실행 중에 찍습니다.
 
 ---
 
 ## 아키텍처 원칙
 
-### 계산 로직과 하드웨어 호출을 절대 같은 함수에 섞지 않는다
+**계산과 하드웨어 호출을 같은 함수에 섞지 않습니다.** `vision/`·`control/`은 GPIO를
+import하지 않고 각도·판정만 내놓으며, `hardware/`는 그 값을 받아 GPIO로 내보내기만
+합니다. 모터 드라이버를 바꾸거나 계산 버그를 찾을 때 서로 영향 없이 손댈 수 있고,
+실제로 이미 검증한 추적 루프를 그대로 둔 채 BLE 통합을 얹을 수 있었습니다.
 
-이 레포의 타협하지 않는 규칙입니다.
-
-- **계산 전용 모듈** — GPIO/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
-  입력은 프레임/키포인트, 출력은 각도·신호값 같은 순수 데이터입니다.
-  `vision/` 전체와 `control/` 전체가 여기 해당합니다.
-- **하드웨어 호출 전용 모듈** — 계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만
-  하고, 계산을 하지 않습니다. `hardware/` 전체가 여기 해당합니다.
-- 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`은 순수 함수이고,
-  실제 GPIO 호출은 `stepper.move_to(angle)`이 전담합니다.
-
-이렇게 분리하면 **모터 드라이버를 교체하거나 계산 버그를 찾을 때 서로 영향 없이**
-수정·검증할 수 있습니다. 실제로 이 구조 덕분에 이미 검증을 마친 추적 루프
-(`app/tracking.py`)를 한 줄도 고치지 않고 그 위에 BLE 통합을 얹을 수 있었습니다.
-
-### 동시성
-
-카메라 캡처 · 추론 · 모터 제어 · BLE가 모두 동시에 동작합니다. 스레딩을 나중에 얹지 않고
-처음부터 설계했습니다 — 모터/릴레이는 논블로킹 워커 스레드를 갖고, BLE는 asyncio 루프에서
-돌며, 러너 스레드는 `loop.call_soon_threadsafe()`로만 BLE에 보고합니다
-(`dbus_fast`가 스레드 안전하지 않기 때문).
+**카메라 캡처·추론·모터·BLE가 모두 동시에 돕니다.** 모터와 릴레이는 논블로킹 워커
+스레드를 갖고, BLE는 asyncio 루프에서 돌며, 러너 스레드는 `call_soon_threadsafe()`로만
+BLE에 보고합니다 (`dbus_fast`가 스레드 안전하지 않기 때문).
 
 ---
 
@@ -287,6 +201,6 @@ docs/                      프로토콜 · 제어 원리 · 문제 해결 기록
 | [`docs/lgpio_patch.md`](docs/lgpio_patch.md) | 부하 시 모터 달그락 소음 — 배제한 가설 8종, 원인(펄스 스레드 선점), 채택한 대책과 확인법 |
 | [`docs/angle_calibration.md`](docs/angle_calibration.md) | 각도 오차의 원인(기어비·백래시·탈조·원점)을 가르는 실험 순서와 보정식 |
 | [`docs/pulse_jitter_data.md`](docs/pulse_jitter_data.md) | 펄스 스레드 지터 실측표 — RT 승격 대책의 근거 |
-| [`docs/hardware_todo.md`](docs/hardware_todo.md) | 하드웨어 잔여 결정·검증 항목 **과 해결 기록** — 모터가 멈추던 두 문제(lgpio EINVAL 스핀 / VREF 과다)의 진단 경위와 배제한 가설이 여기 있습니다 |
+| [`docs/hardware_todo.md`](docs/hardware_todo.md) | 문제 해결 기록 — 모터가 멈추던 두 문제(lgpio EINVAL 스핀 / VREF 과다)의 진단 경위와 배제한 가설, 그리고 잔여 검증 항목 |
 
 **구현 전에 알고리즘을 문서로 정리하고, 코드가 바뀌면 문서도 함께 갱신합니다.**

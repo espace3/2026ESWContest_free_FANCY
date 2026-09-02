@@ -172,7 +172,7 @@ def _track_loop(args, detector, cam, backend, tracker, scenario, mc,
         if frame is None:
             if web_state:
                 web_state.update_stall(["no frames from the camera.",
-                                        "try --rpicam, or check camera wiring."])
+                                        "try --no-rpicam / --opencv, or check camera wiring."])
             time.sleep(0.03)
             continue
 
@@ -295,7 +295,8 @@ def main() -> None:
                    help="시작 시 원점 복원 생략 (헤드를 손으로 0°에 맞춰뒀을 때)")
     # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
+    p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
+                   help="Picamera2 를 먼저 시도 (기본: rpicam-vid 캡처)")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",

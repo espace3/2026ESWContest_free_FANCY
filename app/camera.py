@@ -416,10 +416,18 @@ class _RpicamVidCamera:
                 self.proc.kill()
 
 
-def _open_camera(force_opencv, cam_idx, use_rpicam=False):
+def _open_camera(force_opencv, cam_idx, use_rpicam=True):
+    """카메라를 연다. 백엔드 우선순위: --opencv > rpicam-vid > Picamera2 > OpenCV.
+
+    rpicam-vid 가 기본이다 — Picamera2 는 libcamera 파이썬 바인딩(apt 전용)이
+    필요해서 venv 에서 자주 안 잡히는데, rpicam-vid 는 실행 파일이라 그 제약이
+    없다. 대신 MJPEG 이라 프레임마다 JPEG 디코드 비용이 든다.
+    --no-rpicam 으로 끄면 Picamera2 를 먼저 시도한다.
+    """
     ccfg = CFG["camera"]
 
-    if use_rpicam:
+    # --opencv 를 명시했으면 rpicam 도 건너뛴다 (개발 PC의 USB 웹캠 경로).
+    if use_rpicam and not force_opencv:
         try:
             cam = _RpicamVidCamera(
                 ccfg["width"], ccfg["height"], ccfg.get("fps", 30), cam_idx=cam_idx)
@@ -488,8 +496,8 @@ def main():
     parser.add_argument("--threads", type=int, default=_TRK["threads"],
                         help="TFLite 인터프리터 스레드 수 (기본 3, FPS 튜닝용)")
     parser.add_argument("--opencv", action="store_true")
-    parser.add_argument("--rpicam", action="store_true",
-                        help="rpicam-vid 서브프로세스로 카메라 캡처 (picamera2 미설치 시 사용)")
+    parser.add_argument("--no-rpicam", dest="rpicam", action="store_false",
+                        help="Picamera2 를 먼저 시도 (기본: rpicam-vid 캡처)")
     parser.add_argument("--cam", type=int, default=0,
                         help="카메라 인덱스 — CSI 케이블 포트(cam0/cam1) 또는 OpenCV 장치 번호")
     parser.add_argument("--no-window", action="store_true")

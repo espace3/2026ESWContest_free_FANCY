@@ -64,7 +64,7 @@ cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 �
 
 실행 (RPi 5, 레포 루트에서):
     python3 app/ble_service.py --axis pan
-    python3 app/ble_service.py --axis pantilt --rpicam --no-window
+    python3 app/ble_service.py --axis pantilt --no-window
     python app/ble_service.py --axis pan --dry-run --opencv   # 개발 PC
 """
 
@@ -424,7 +424,8 @@ def main() -> None:
                    help="회전 모드 스윕 속도 (°/s)")
     # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
+    p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
+                   help="Picamera2 를 먼저 시도 (기본: rpicam-vid 캡처)")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",

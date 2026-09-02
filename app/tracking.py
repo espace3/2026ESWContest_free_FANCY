@@ -128,7 +128,7 @@ def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
         if frame is None:
             if args.web and web_state:
                 web_state.update_stall(["no frames from the camera.",
-                                        "try --rpicam, or check camera wiring."])
+                                        "try --no-rpicam / --opencv, or check camera wiring."])
             time.sleep(0.03)
             continue
 
@@ -238,7 +238,7 @@ def run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
         if frame is None:
             if args.web and web_state:
                 web_state.update_stall(["no frames from the camera.",
-                                        "try --rpicam, or check camera wiring."])
+                                        "try --no-rpicam / --opencv, or check camera wiring."])
             time.sleep(0.03)
             continue
 
@@ -353,7 +353,7 @@ def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
         if frame is None:
             if args.web and web_state:
                 web_state.update_stall(["no frames from the camera.",
-                                        "try --rpicam, or check camera wiring."])
+                                        "try --no-rpicam / --opencv, or check camera wiring."])
             time.sleep(0.03)
             continue
 

@@ -20,7 +20,10 @@ bluez_peripheral          # GATT 서버 (순수 파이썬, dbus_fast 기반)
 
 # ── 시스템 패키지 (pip 아님) ────────────────────────────────────────────────
 # sudo apt install -y bluez              # BlueZ 데몬 (Pi OS 기본 포함)
-# sudo apt install -y python3-picamera2  # CSI 카메라. 없으면 --rpicam / --opencv 사용
+# 카메라는 기본적으로 rpicam-vid(rpicam-apps, Pi OS 기본 포함)로 캡처한다.
+# Picamera2 를 쓰려면(--no-rpicam) apt 로 깔고 venv 를
+# --system-site-packages 로 만들 것 — libcamera 바인딩은 pip 에 없다.
+# sudo apt install -y python3-picamera2
 
 # ── 모델 파일 (레포에 미포함) ───────────────────────────────────────────────
 # multipose_lightning.tflite 를 레포 루트에 둘 것 — README "설치" 절 참고

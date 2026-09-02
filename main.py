@@ -76,7 +76,7 @@ app/ble_service.py와의 차이만 기록합니다 — 카메라 세션/창 스�
 
 실행 (RPi 5, 레포 루트에서):
     python3 main.py --axis pan
-    python3 main.py --axis pantilt --rpicam --no-window
+    python3 main.py --axis pantilt --no-window
     python main.py --axis pan --dry-run --opencv   # 개발 PC
 """
 
@@ -685,7 +685,8 @@ def main() -> None:
                    help="매핑에서 부위가 안 보일 때 추정으로 넘어가는 시간 (s)")
     # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
+    p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
+                   help="Picamera2 를 먼저 시도 (기본: rpicam-vid 캡처)")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",

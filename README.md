@@ -18,7 +18,7 @@
 
 ```bash
 # Raspberry Pi 5 — 레포 루트에서
-python3 main.py --axis pantilt --rpicam --no-window
+python3 main.py --axis pantilt --no-window
 
 # 로컬 창으로 화면을 보며 확인
 python3 main.py --axis pantilt
@@ -88,7 +88,10 @@ python3 main.py --axis pan --dry-run --opencv
 ```bash
 # 1. 시스템 패키지
 sudo apt install -y bluez
-sudo apt install -y python3-picamera2          # CSI 카메라 (없으면 --rpicam / --opencv)
+# 카메라는 기본적으로 rpicam-vid(rpicam-apps, Pi OS 기본 포함)로 캡처한다.
+# Picamera2 를 쓰려면 아래를 깔고 --no-rpicam 을 준다 (venv 는
+# --system-site-packages 로 만들어야 libcamera 바인딩이 보인다).
+# sudo apt install -y python3-picamera2
 
 # 2. 파이썬 의존성
 pip install -r requirements.txt

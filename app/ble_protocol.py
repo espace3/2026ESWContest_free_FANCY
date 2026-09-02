@@ -12,7 +12,7 @@ app/ble_protocol.py - BLE 프로토콜 상수 · GATT 서버 부팅 · 추적 �
 한다. 실제 릴레이 구동과 부위 모드는 app/ble_service.py → main.py 에서 붙는다.
 
 카메라는 모터/디텍터와 달리 프로세스 전체가 아니라 **추적 세션(스레드)마다
-새로 열고 끝나면 반드시 해제**한다 — 특히 `--rpicam`(rpicam-vid 서브프로세스)
+새로 열고 끝나면 반드시 해제**한다 — 특히 rpicam-vid(기본) 백엔드는
 백엔드는 아무도 안 읽는 동안 파이프가 막혀 캡처 자체가 멎어버리는 게 실기로
 확인됐다(기본 모드로 쉬다가 타겟 모드로 돌아오면 화면이 멈춘 채 그대로).
 
@@ -27,8 +27,8 @@ cv2 창은 추적 스레드가 직접 그리지 않는다 — HighGUI(GTK)는 �
 
 실행 (RPi 5, 레포 루트에서):
     python3 app/ble_protocol.py --axis pan
-    python3 app/ble_protocol.py --axis tilt --rpicam
-    python3 app/ble_protocol.py --axis pantilt --rpicam --no-window
+    python3 app/ble_protocol.py --axis tilt
+    python3 app/ble_protocol.py --axis pantilt --no-window
     python app/ble_protocol.py --axis pan --dry-run --opencv   # 개발 PC, 모터/BLE 없이 파이프라인만
 
 축별 튜닝 인자는 verify_track_pan/tilt/pantilt.py와 이름이 같다
@@ -92,7 +92,7 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
     """axis에 맞는 app/tracking.py 루프를 stop_event 하나만 받는 콜러블로 감싼다.
 
     카메라는 세션(스레드)마다 새로 열고 끝나면 반드시 해제한다 — 특히
-    `--rpicam`(rpicam-vid 서브프로세스) 백엔드는 아무도 읽지 않는 동안 파이프
+    rpicam-vid(기본) 백엔드는 아무도 읽지 않는 동안 파이프
     버퍼가 차서 캡처 자체가 멎어버리는 게 실기로 확인됨. "기본 모드"로 쉬는
     동안 카메라를 계속 열어두면 재진입 시 그 멎은 상태(화면 정지) 그대로
     남는다 — 매번 새로 열면 이 문제를 피한다.
@@ -364,7 +364,8 @@ def main() -> None:
                    help="--axis tilt 전용 조준 부위")
     # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
-    p.add_argument("--rpicam", action="store_true", help="rpicam-vid 서브프로세스 캡처")
+    p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
+                   help="Picamera2 를 먼저 시도 (기본: rpicam-vid 캡처)")
     p.add_argument("--cam", type=int, default=0)
     p.add_argument("--no-window", action="store_true")
     p.add_argument("--dry-run", action="store_true",

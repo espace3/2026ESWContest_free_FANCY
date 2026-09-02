@@ -46,8 +46,8 @@ from control.recognition_report import RecognitionReporter
 from vision.region_filter import RegionFilter
 from vision.target_select import (DEFAULT_MATCH_RADIUS, person_center,
                                     select_target)
-from app.tracking import (_INVISIBLE, _axes_idle, _draw_overlay, chest_point,
-                          run_tracking)
+from app.tracking import (_INVISIBLE, LatencyStat, _axes_idle, _draw_overlay,
+                          chest_point, run_tracking)
 from app.camera import _open_cam_retry, _read_frame, _release_cam_pause
 
 
@@ -231,6 +231,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         last_pan, last_tilt = mc.current_position()
         recognition = RecognitionReporter()   # 인식 Status 보고 시점 (깜빡임 억제)
         fps_hist: list[float] = []
+        resp = LatencyStat("응답(캡처→모터 명령)")
         t_prev = time.time()
         last_log = 0.0
         print(f"[E2E] 부위 순찰 세션 시작 (매핑 + 시간 슬롯) — 조준 배수 "
@@ -342,6 +343,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 if not stop_event.is_set() and (pan_g, tilt_g) != (last_pan, last_tilt):
                     mc.move_to(pan_g, tilt_g)
                     last_pan, last_tilt = pan_g, tilt_g
+                    resp.add((time.time() - t0) * 1000.0)
 
                 # ── FPS/로그/프레임 송출 ─────────────────────────────────────
                 dt = time.time() - t_prev
@@ -356,7 +358,8 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                           f"rg={scenario.active_region():<5} pan={cur_pan:+7.2f}° "
                           f"tilt={cur_tilt:+6.2f}° "
                           f"wind={fan_level_txt(levels, scenario, phase, service.common_level)} "
-                          f"fps={fps:4.1f}  ", end="", flush=True)
+                          f"fps={fps:4.1f} resp={resp.p50():3.0f}ms  ",
+                          end="", flush=True)
                     last_log = time.time()
                 if web_state:
                     vis = _draw_overlay(frame, people, target_idx, smoothed, fresh,
@@ -375,6 +378,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         finally:
             # 러너 소유 종료 — 릴레이를 0으로 놓고 나가면, 서비스가 join 후
             # 다음 상태를 재적용한다 (docstring 7).
+            print(f"\n[측정] {resp.summary()}")
             fan.set_speed(0)
             _release_cam_pause(cam, backend)
 

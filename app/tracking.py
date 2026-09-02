@@ -63,6 +63,36 @@ def chest_point(keypoints: list[dict], conf_thr: float) -> dict:
     return {"cx": 0.5, "cy": 0.5, "visible": False, "paired": False}
 
 
+class LatencyStat:
+    """지연 실측 누적 — README "성능" 표를 채우기 위한 계측기.
+
+    목표가 코드로 검증되지 않으면 주장에 그친다. add()로 표본을 쌓고 summary()로
+    p50/p95/최대를 출력한다. 평균 대신 백분위를 쓰는 이유: 응답 시간 목표는
+    "대체로 빠르다"가 아니라 "느릴 때도 이 안"이라서, 평균은 꼬리를 가린다.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._v: list[float] = []
+
+    def add(self, ms: float) -> None:
+        self._v.append(ms)
+
+    def last(self) -> float:
+        return self._v[-1] if self._v else 0.0
+
+    def p50(self) -> float:
+        return sorted(self._v)[len(self._v) // 2] if self._v else 0.0
+
+    def summary(self) -> str:
+        if not self._v:
+            return f"{self.name}: 표본 없음"
+        v = sorted(self._v)
+        q = lambda f: v[min(len(v) - 1, int(len(v) * f))]
+        return (f"{self.name}: n={len(v)}  p50={q(0.5):.1f}ms  "
+                f"p95={q(0.95):.1f}ms  max={v[-1]:.1f}ms")
+
+
 def _axes_idle(mc) -> bool:
     """두 축 모두 목표 도달 + 큐 배출 상태인지 논블로킹 확인 (_DryMotor는 항상 True)."""
     if not hasattr(mc, "pan"):
@@ -235,6 +265,7 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
     last_pan = last_tilt = 0.0
     lost = True
     fps_hist: list[float] = []
+    resp = LatencyStat("응답(캡처→모터 명령)")
     t_prev = time.time()
     last_log = time.time()
 
@@ -296,6 +327,7 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
             tilt_g = apply_deadzone(tilt_t, last_tilt, args.deadzone_tilt) if use_tilt else 0.0
             if (pan_g, tilt_g) != (last_pan, last_tilt):
                 mc.move_to(pan_g, tilt_g)
+                resp.add((time.time() - t0) * 1000.0)
                 last_pan, last_tilt = pan_g, tilt_g
         else:
             if not lost:
@@ -364,3 +396,5 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
                     break
         if args.no_window:
             time.sleep(max(0.0, 0.02 - (time.time() - t0)))
+
+    print(f"\n[측정] {resp.summary()}")

@@ -91,6 +91,7 @@ import asyncio
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 # 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
@@ -108,7 +109,8 @@ from config import (CFG, SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
 from vision.pose_estimate import MoveNetMultiPoseDetector
 from vision.region_filter import RegionFilter
-from app.tracking import add_state_args, open_motor_from_args, _DryRelay
+from app.tracking import (LatencyStat, add_state_args, open_motor_from_args,
+                          _DryRelay)
 from app.camera import (_WebStreamState, _make_handler, _ThreadedHTTP,
                         _window_viewer)
 from app.runners import (ModeSupervisor, _ReportingDetector, _make_body_runner,
@@ -143,6 +145,11 @@ class EswFanService(Service):
         self._level = 0                                  # 마지막 수신 공용 세기
         # 부위별 세기 (부위 러너용). 앱이 부위 모드 진입 시 자기 값으로 덮어쓴다.
         self._body_levels = {0x01: 0, 0x02: 1, 0x03: 0}
+        # BLE 응답 실측 (README "성능"). 둘을 나눠 재는 이유: 에코는 적용 전에
+        # 보내므로(아래 setter 주석) 앱이 체감하는 응답이고, 적용 완료는 러너
+        # 전환의 join 을 포함해 수 초가 될 수 있다.
+        self._lat_echo = LatencyStat("BLE 응답(수신→에코)")
+        self._lat_apply = LatencyStat("BLE 적용(수신→반영 완료)")
 
     # ── 상태 적용/통지 ───────────────────────────────────────────────────────
 
@@ -230,13 +237,17 @@ class EswFanService(Service):
         if len(value) != 1 or value[0] not in (0x00, 0x01):
             print(f"[RX] 전원: 잘못된 값 ({_hex(value)}) — 거부, 에코 없음")
             return
+        t0 = time.time()
         self._power_on = bool(value[0])
         # 에코는 적용 전에 보낸다(수신·수락 확인) — _apply_state의 러너 전환은
         # 이전 스레드 join으로 수 초 걸릴 수 있어, 뒤에 보내면 앱의 에코
         # 타임아웃이 모드/전원 전환마다 오탐한다. mode/wind setter도 동일.
         self._echo("power", value)
+        self._lat_echo.add((time.time() - t0) * 1000.0)
         level = self._apply_state()
-        print(f"[RX] 전원: {'ON' if self._power_on else 'OFF'} → 풍속 {level}단")
+        self._lat_apply.add((time.time() - t0) * 1000.0)
+        print(f"[RX] 전원: {'ON' if self._power_on else 'OFF'} → 풍속 {level}단"
+              f"  ({self._lat_echo.last():.0f}/{self._lat_apply.last():.0f}ms)")
 
     @characteristic(MODE_UUID, CharFlags.WRITE)
     def mode(self, options):
@@ -247,10 +258,14 @@ class EswFanService(Service):
         if len(value) != 1 or value[0] not in MODE_NAMES:
             print(f"[RX] 모드: 잘못된 값 ({_hex(value)}) — 거부, 에코 없음")
             return
+        t0 = time.time()
         self._mode = value[0]         # 유효 모드는 _apply_state/부위 러너가 갱신
         self._echo("mode", value)     # 적용 전 송신 (power setter 주석 참고)
+        self._lat_echo.add((time.time() - t0) * 1000.0)
         level = self._apply_state()   # 세기 복원 없음 — 게이팅 재평가만 (docstring 1)
-        print(f"[RX] 모드: {MODE_NAMES[value[0]]} → 풍속 {level}단 유지")
+        self._lat_apply.add((time.time() - t0) * 1000.0)
+        print(f"[RX] 모드: {MODE_NAMES[value[0]]} → 풍속 {level}단 유지"
+              f"  ({self._lat_echo.last():.0f}/{self._lat_apply.last():.0f}ms)")
 
     @characteristic(WIND_UUID, CharFlags.WRITE)
     def wind(self, options):
@@ -261,15 +276,19 @@ class EswFanService(Service):
         if len(value) != 2 or value[0] not in WIND_TARGETS or not 0 <= value[1] <= 3:
             print(f"[RX] 풍량: 잘못된 값 ({_hex(value)}) — 거부, 에코 없음")
             return
+        t0 = time.time()
         target, level = value[0], value[1]
         if target == 0x00:
             self._level = level
         else:
             self._body_levels[target] = level
         self._echo("wind", value)     # 적용 전 송신 (power setter 주석 참고)
+        self._lat_echo.add((time.time() - t0) * 1000.0)
         applied = self._apply_state()
+        self._lat_apply.add((time.time() - t0) * 1000.0)
         level_txt = "정지" if level == 0 else f"{level}단"
-        print(f"[RX] 풍량: {WIND_TARGETS[target]} {level_txt} → 현재 적용 {applied}단")
+        print(f"[RX] 풍량: {WIND_TARGETS[target]} {level_txt} → 현재 적용 {applied}단"
+              f"  ({self._lat_echo.last():.0f}/{self._lat_apply.last():.0f}ms)")
 
     @characteristic(STATUS_UUID, CharFlags.READ | CharFlags.NOTIFY)
     def status(self, options):
@@ -536,6 +555,8 @@ def main() -> None:
                 except KeyboardInterrupt:
                     print("\n[E2E] Ctrl+C 종료")
                 finally:
+                    print(f"\n[측정] {service._lat_echo.summary()}")
+                    print(f"[측정] {service._lat_apply.summary()}")
                     fan.set_speed(0)  # 0° 복귀(최대 30s) 동안 팬이 계속 돌지 않게 먼저 정지
                     supervisor.stop_and_join()
                     if args.axis in ("tilt", "pantilt"):

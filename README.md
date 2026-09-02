@@ -5,7 +5,7 @@
 앱은 **Flutter/Dart**로 작성하며, **BLE(Bluetooth Low Energy)** 로
 선풍기 제어 보드(**Raspberry Pi 5**)와 통신합니다.
 
-> RPi 제어 코드는 [`submission`](https://github.com/espace3/ESW/tree/submission) 브랜치를 참고하세요.
+> RPi 제어 코드는 [`main`](https://github.com/espace3/ESW/tree/main) 브랜치를 참고하세요.
 
 ---
 

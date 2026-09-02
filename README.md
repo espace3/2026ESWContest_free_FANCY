@@ -86,7 +86,7 @@ lib/                    ← Dart 소스
   pages/                  화면 (홈 · BLE 스캔 · 기본 모드 · 타겟 모드)
   services/               상태 관리, BLE 연결/프로토콜
   widgets/                공용 위젯
-android/ ios/ windows/  ← 플랫폼별 러너 프로젝트
+android/ ios/            ← 플랫폼별 러너 프로젝트
 test/                   ← 위젯 테스트
 release/                ← 배포용 APK (최신 버전으로 갱신)
 ```
@@ -95,7 +95,7 @@ release/                ← 배포용 APK (최신 버전으로 갱신)
 
 ```bash
 flutter pub get
-flutter run -d windows   # 1차 개발 타깃
+flutter run   # 연결된 Android/iOS 기기·에뮬레이터 대상
 ```
 
 ## 7. 작업 규칙 (요약)

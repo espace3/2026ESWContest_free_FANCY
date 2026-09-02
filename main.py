@@ -663,12 +663,17 @@ def main() -> None:
                    help="폴백 중 순찰 재진입 정지 시간 (s)")
     p.add_argument("--body-still-deg", type=float, default=3.0,
                    help="정지 판정 팬 각 범위 (°)")
-    p.add_argument("--body-head-ratio", type=float, default=1.1,
+    # 부위 간 각도 간격을 부풀리는 보정. 0 이면 각 부위를 조준점(--target-cy)에
+    # 정확히 놓는다 — 기본값이다.
+    # 예전 기본값(머리 1.1 / 상체 0.45)은 서 있는 자세에서만 검증됐다. 그때는
+    # 머리 조준각이 틸트 리밋(-25°)에 잘려 편향이 드러나지 않았는데, 앉으면
+    # 머리가 -10° 근처로 올라와 잘리지 않아 머리보다 8° 위를 겨누고 얼굴이 화면
+    # 밖으로 나갔다 (실기 2026-09-02). 렌즈↔송풍구 높이차 보정은 부위마다 다를
+    # 이유가 없으므로 --target-cy 가 담당한다.
+    p.add_argument("--body-head-ratio", type=float, default=0.0,
                    help="머리 조준을 위로 올릴 배수 (측정 머리↔상체 간격 대비)")
-    p.add_argument("--body-upper-ratio", type=float, default=0.45,
-                   help="상체 조준을 위로 올릴 배수 (머리와 같은 방향. 음수면 "
-                        "아래로. upper 부위 중심은 어깨+엉덩이 중점이라 배꼽 "
-                        "근처여서, 가슴을 맞히려면 올려야 한다)")
+    p.add_argument("--body-upper-ratio", type=float, default=0.0,
+                   help="상체 조준을 위로 올릴 배수 (머리와 같은 방향, 음수면 아래로)")
     p.add_argument("--body-spread-ratio", type=float, default=0.15,
                    help="부위 간 최소 조준 간격 배수. 머리가 위 리밋에 붙으면 "
                         "이 간격만큼 상체를 아래로 밀어내므로, 크게 잡으면 "

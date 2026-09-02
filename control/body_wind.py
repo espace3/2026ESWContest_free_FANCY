@@ -318,13 +318,22 @@ class BodyPatrolScenario(FullBodyScenario):
         부위가 안 보이면 웨이포인트 기반 aims()로 떨어진다 — 부위 간 최소 간격과
         리밋 보정이 거기 들어 있어, 지금 못 보는 부위도 겹치지 않게 겨눈다.
         """
+        # fresh(이번 프레임 검출)가 아니라 regions 의 visible 을 본다. regions 는
+        # PoseTracker 가 EMA 로 다듬고 miss_thr(기본 5) 프레임까지 끊김을 메운
+        # 값이라, fresh 까지 요구하면 그 보정이 통째로 무시돼 한 프레임만 놓쳐도
+        # 웨이포인트 폴백으로 떨어진다 (실기 2026-09-02: 앉은 자세에서 "미관측"이
+        # 더 많이 찍힘). 재계산은 정지 상태에서만 하므로 몇 프레임 묵은 좌표를
+        # 써도 카메라가 그동안 움직이지 않는다.
         r = obs["regions"].get(region)
-        if obs["idle"] and obs["fresh"].get(region) and r and r["visible"]:
+        if obs["idle"] and r and r["visible"]:
             bias = self.aim_ratio.get(region, 0.0) * self.gap_deg
             aim = self._ct(cur_tilt + self._tilt_err(r["cy"]) - bias)
-            if self._aim_hold is None:
+            # 슬롯의 첫 계산과, 그 뒤 1° 넘게 바뀐 재계산만 찍는다 — 수렴하는지
+            # (한 번 잡고 조용해지는지) 아니면 계속 흔들리는지가 이걸로 갈린다.
+            if self._aim_hold is None or abs(aim - self._aim_hold) > 1.0:
+                tag = "첫계산" if self._aim_hold is None else "재계산"
                 self.events.append(
-                    f"[aim] {region} 관측 cy={r['cy']:.2f} 편향{bias:+.1f}° "
+                    f"[aim] {region} {tag} cy={r['cy']:.2f} 편향{bias:+.1f}° "
                     f"장부{cur_tilt:+.1f}° → 조준{aim:+.1f}°")
             self._aim_hold = aim
             return aim
@@ -334,7 +343,7 @@ class BodyPatrolScenario(FullBodyScenario):
         if self._aim_hold is None:
             self.events.append(
                 f"[aim] {region} 미관측(idle={obs['idle']!s:5} "
-                f"fresh={obs['fresh'].get(region)!s:5}) → 웨이포인트 조준{src:+.1f}°")
+                f"visible={bool(r and r['visible'])!s:5}) → 웨이포인트 조준{src:+.1f}°")
             self._aim_hold = src
         return src
 

@@ -68,6 +68,7 @@ class BodyPatrolScenario(FullBodyScenario):
         self.default_gap_deg = default_gap_deg   # 머리를 아직 못 봤을 때 쓸 값
         self.gap_alpha = gap_alpha
         self._gap_deg: float | None = None
+        self._aim_hold: float | None = None   # 이동 중 유지할 조준각
         # 러너가 매 프레임 갱신하는 값들.
         self.allowed: set[str] = {"head", "upper", "lower"}
         self.levels: dict[str, int] = {}
@@ -283,13 +284,48 @@ class BodyPatrolScenario(FullBodyScenario):
         elif obs["t"] >= self._slot_until:
             self._patrol_i = (self._patrol_i + 1) % len(route)
             region = route[self._patrol_i % len(route)]
+            self._aim_hold = None      # 부위가 바뀌었으니 유지값 폐기
             self._slot_until = obs["t"] + self._slot_len(region, cur_tilt)
 
         pan_t = self.body_pan
         if obs["chest"]["visible"]:
             pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(obs["chest"]["cx"]))
             self.body_pan = pan_t
-        return pan_t, self.aims().get(region, cur_tilt)
+        return pan_t, self._aim_tilt(region, obs, cur_tilt)
+
+    def _aim_tilt(self, region: str, obs: dict, cur_tilt: float) -> float:
+        """조준 부위의 틸트 목표각.
+
+        그 부위가 보이면 절대 조준각을 **관측에서 매번 다시 계산**한다:
+
+            조준각 = 현재각 + 화면오차각 - 조준편향(aim_ratio x gap)
+            수렴점 = 부위의 실제 각도 - 조준편향
+
+        저장된 웨이포인트 대신 이걸 쓰는 이유: 사용자가 앉거나 다가와도 조준이
+        바로 따라간다. 웨이포인트는 정지 구간 갱신을 기다려야 해서 그동안 낡은
+        각을 쓴다.
+
+        ⚠ 이동 중에는 다시 계산하지 않고 직전 목표를 유지한다. 현재각은 장부라
+        이동 중 실제 로터보다 앞서 있고(_LOOKAHEAD_S 분량) 화면은 실제 로터가
+        본 것이라, 매 프레임 재계산하면 그 지연만큼 목표가 진행 방향으로 밀렸다가
+        멈추면 되돌아오는 진동이 된다 (실측 시뮬레이션: 지연 1.5°에서 잔진동
+        1.86°, 정지 때만 재계산하면 0). 정지 상태에서는 장부 = 실제라 편향이 없다.
+
+        ⚠ gain 을 곱한 증분 방식(현재각 + gain x (오차 - 편향))은 쓰지 않는다.
+        데드존이 gain x 오차 를 걸러서 오차 < 데드존/gain (기본 1.0/0.2 = 5°)
+        구간에서 명령이 아예 안 나가 그만큼 못 미친 채 멈춘다.
+
+        부위가 안 보이면 웨이포인트 기반 aims()로 떨어진다 — 부위 간 최소 간격과
+        리밋 보정이 거기 들어 있어, 지금 못 보는 부위도 겹치지 않게 겨눈다.
+        """
+        r = obs["regions"].get(region)
+        if obs["idle"] and obs["fresh"].get(region) and r and r["visible"]:
+            bias = self.aim_ratio.get(region, 0.0) * self.gap_deg
+            self._aim_hold = self._ct(cur_tilt + self._tilt_err(r["cy"]) - bias)
+            return self._aim_hold
+        if self._aim_hold is not None:
+            return self._aim_hold
+        return self.aims().get(region, cur_tilt)
 
     def step(self, obs: dict):
         if self.state == "patrol":

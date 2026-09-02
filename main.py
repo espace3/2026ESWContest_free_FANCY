@@ -327,9 +327,12 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 # 남기는 정지 오차가 진행을 막지 않는다. 다만 재조준·탐색은
                 # 부모가 여전히 수렴으로 판정하므로 그때만 좁힌다.
                 converging = scenario.state in ("recenter", "search")
-                # 팬은 순찰 중에도 넓은 데드존을 그대로 쓴다 — 가슴 cx 추종이라
-                # 데드존이 곧 잡음 억제다. 좁히면 틸트만 움직이면 되는 상황에서도
-                # cx 미세 변화에 팬이 따라 움직인다 (실기 2026-09-02).
+                # 팬은 순찰에서도 사용자 데드존을 쓴다(1.0° — 사각지대 3.3°).
+                # 한때 2.0°였던 건 하체→상체 전환에서 팬이 따라 움직이는 것을
+                # 막기 위해서였는데, 그 원인은 잡음이 아니라 한쪽 어깨만 잡힌
+                # 프레임의 cx 도약이었다 — chest_point 의 paired 로 원인을 막은
+                # 뒤 되돌렸다 (a6a41b4). 넓은 데드존은 도약을 근거리에서 막지도
+                # 못하면서(1.3m 이내) 상시 조준 오차만 6.7° 로 키웠다.
                 pan_g = apply_deadzone(pan_t, last_pan,
                                        conv_dz_pan if converging else args.body_deadzone_pan)
                 # 틸트는 순찰도 좁힌다 — 조준이 연속 피드백(현재각 + gain x 오차)
@@ -698,7 +701,7 @@ def main() -> None:
                    help="시나리오 재조준 트리거 가슴 오차 (° — 게이트보다 크게)")
     p.add_argument("--body-rescan-thr", type=float, default=30.0,
                    help="재조준 후 전신 재스캔 판정 이동량 (°)")
-    p.add_argument("--body-deadzone-pan", type=float, default=2.0,
+    p.add_argument("--body-deadzone-pan", type=float, default=1.0,
                    help="팬 데드존 (° — 포즈 잡음이 모터로 새는 것 차단)")
     p.add_argument("--body-deadzone-tilt", type=float, default=1.0,
                    help="틸트 데드존 (°)")

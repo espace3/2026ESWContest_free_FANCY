@@ -1,7 +1,7 @@
 /// BLE GATT 프로토콜 상수 (docs/ble_protocol.md와 일치해야 함).
 ///
-/// RPi 쪽 구현(ESW/scripts/verify_E2E_v3.py)과 공유하는 계약이므로
-/// 변경 시 문서·RPi 스크립트를 함께 갱신한다.
+/// RPi 쪽 구현(submission 브랜치의 app/ble_protocol.py, app/ble_service.py)과
+/// 공유하는 계약이므로 변경 시 문서·RPi 코드를 함께 갱신한다.
 library;
 
 import 'dart:typed_data';

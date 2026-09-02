@@ -6,7 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 import '../services/ble/ble_connection_service.dart';
 import '../services/ble/ble_protocol.dart' as proto;
 
-/// BLE 스캔/연결 디버그 페이지 (ble_todo 1단계 스파이크).
+/// BLE 스캔/연결 디버그 페이지.
 ///
 /// - 스캔 결과는 전부 리스트에 표시하되, **연결은 우리 서비스 UUID를
 ///   광고하는 기기(ESW-FAN)에만 허용**한다 — 타 기기는 표시 전용.

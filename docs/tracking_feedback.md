@@ -57,7 +57,7 @@
 
 | 위치 | 역할 |
 |---|---|
-| `control/control_signal_generator.py` | `compute_pan_angle` / `compute_tilt_angle` / `clamp_angle` / `apply_deadzone` |
+| `control/control_signal.py` | `compute_pan_angle` / `compute_tilt_angle` / `clamp_angle` / `apply_deadzone` |
 | `app/tracking.py` | 닫힌 루프 본문 `run_tracking(axis=...)` — pan / tilt / pantilt 공용 |
 | `control/body_wind.py` | 위 원리를 전신 순찰 상태기계로 확장 |
 | `config.py` `"fov"` / `"limits"` | 환산 상수와 소프트 리밋 |

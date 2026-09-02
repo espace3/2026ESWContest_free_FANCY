@@ -106,7 +106,7 @@ from config import (CFG, SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
                     STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS)
 
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
-from vision.pose_estimator import MoveNetMultiPoseDetector
+from vision.pose_estimate import MoveNetMultiPoseDetector
 from vision.region_filter import RegionFilter
 from app.tracking import add_state_args, open_motor_from_args, _DryRelay
 from app.camera import (_WebStreamState, _make_handler, _ThreadedHTTP,
@@ -510,7 +510,7 @@ def main() -> None:
                 fan_cm = _DryRelay()
             else:
                 # lgpio를 최상단에서 import하는 모듈이라 지연 import — --dry-run 개발 PC 대응
-                from hardware.relay_controller import FanRelay
+                from hardware.relay_control import FanRelay
                 fan_cm = FanRelay(CFG, handle=mc.h)  # gpiochip 핸들 공유 (mc보다 먼저 닫혀야 함)
 
             with fan_cm as fan:  # mc보다 먼저 닫힘 — 공유 핸들이 살아있을 때 전부 오픈

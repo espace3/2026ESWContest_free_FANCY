@@ -75,7 +75,7 @@ python3 main.py --axis pan --dry-run --opencv
 - **OS / 언어**: Raspberry Pi OS Lite 64-bit, Python 3.11.15
 - **추론**: TFLite Runtime + MoveNet MultiPose Lightning
   (17 COCO keypoints, 최대 6인 동시 검출). 기본 입력 256×256이지만 FPS 확보를 위해
-  **160×160**으로 낮춰 운용합니다 (`vision/pose_estimator.py`의 `INPUT_SIZE`)
+  **160×160**으로 낮춰 운용합니다 (`vision/pose_estimate.py`의 `INPUT_SIZE`)
 - **영상**: OpenCV 4.x
 - **BLE**: BlueZ 5.x GATT 서버 (`bluez_peripheral` / dbus_fast), Pi = Peripheral
 - **GPIO**: lgpio — Pi 5는 pigpio(DMA 하드웨어 타이밍)를 쓸 수 없습니다
@@ -132,26 +132,26 @@ python3 tools/set_origin.py
 config.py                 모든 튜닝 상수 (CFG 딕셔너리) — 핀, FOV, 리밋, 구동 파라미터
 
 vision/                   순수 계산 — GPIO/BlueZ import 금지, 프레임/키포인트 in, 데이터 out
-  pose_estimator.py         MoveNetMultiPoseDetector: 프레임 → 검출된 전원의 키포인트 +
+  pose_estimate.py         MoveNetMultiPoseDetector: 프레임 → 검출된 전원의 키포인트 +
                             부위(머리·상체·하체) 중심 좌표
-  target_selector.py        다중 인원 중 bbox 면적 최대 1인 선정.
+  target_select.py        다중 인원 중 bbox 면적 최대 1인 선정.
                             히스테리시스 포함 — 면적이 비슷하면 기존 대상자 유지(깜빡임 방지)
   region_filter.py           부위 중심 좌표 EMA 스무딩 + 부위별 miss 판정.
                             대상 교체·재획득 시에는 EMA 없이 즉시 점프(허공을 훑지 않도록)
 
 control/                  순수 계산 — GPIO/BlueZ import 금지
-  control_signal_generator.py  좌표 → 팬/틸트 각도, 데드존, 소프트 리밋
+  control_signal.py  좌표 → 팬/틸트 각도, 데드존, 소프트 리밋
   body_wind.py                 부위 모드 전체: 전신 시나리오 상태기계(한 프레임 매핑 →
                                시간 슬롯 순찰 → 재조준·탐색, 가림·틸트 리밋 처리),
                                순찰 경로 필터(세기 0인 부위 제외), 풍속 중재,
                                이동 감지 게이트, 부위별 조준각 벌리기
-  recognition_reporter.py      객체 인식 notify를 언제 보낼지 판정 — 시간 창 안의
+  recognition_report.py      객체 인식 notify를 언제 보낼지 판정 — 시간 창 안의
                                검출 비율로 경계 상황의 깜빡임을 흡수
 
 hardware/                 하드웨어 호출 전용 — 계산 결과를 GPIO로 내보내기만 함
-  motor_controller.py       팬틸트 스테퍼 구동. 논블로킹(축별 워커 스레드, 최신 목표 선점),
+  motor_control.py       팬틸트 스테퍼 구동. 논블로킹(축별 워커 스레드, 최신 목표 선점),
                             위치 저장/복원, lgpio 펄스 스레드 RT 승격 대책 포함
-  relay_controller.py       선풍기 풍속 릴레이(TS0011) 구동. 논블로킹,
+  relay_control.py       선풍기 풍속 릴레이(TS0011) 구동. 논블로킹,
                             break-before-make(전부 오픈 → guard → 하나만 닫기)
   position_store.py         장부 위치(스텝)를 파일에 저장/복원 — 파일 I/O 전용
   tools/patch_lgpio.sh      liblgpio EINVAL 무한 스핀 패치 (Pi에서 1회 실행 —
@@ -241,7 +241,7 @@ tools/                  실측·캘리브레이션 도구 — 운용에는 안 �
 - **하드웨어 호출 전용 모듈** — 계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만
   하고, 계산을 하지 않습니다. `hardware/` 전체가 여기 해당합니다.
 - 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`은 순수 함수이고,
-  실제 GPIO 호출은 `motor_controller.move_to(angle)`이 전담합니다.
+  실제 GPIO 호출은 `motor_control.move_to(angle)`이 전담합니다.
 
 이렇게 분리하면 **모터 드라이버를 교체하거나 계산 버그를 찾을 때 서로 영향 없이**
 수정·검증할 수 있습니다. 실제로 이 구조 덕분에 이미 검증을 마친 추적 루프

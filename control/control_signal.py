@@ -1,15 +1,15 @@
 """
-control/control_signal_generator.py
+control/control_signal.py
 
 카메라 좌표계 → 모터 제어값 변환 — 순수 계산 모듈.
 GPIO/UART/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
 입력은 vision/ 모듈이 만든 키포인트·정규화 좌표, 출력은 각도(degree) 같은
 순수 값입니다. 실제로 모터를 움직이는 코드는
-hardware/motor_controller.py 쪽 몫입니다.
+hardware/motor_control.py 쪽 몫입니다.
 
 주의: 선풍기 풍속(바람 세기)은 이 모듈이 다루는 대상이 아닙니다 — 풍속은
 부위(머리/상체/하체)별로 사용자가 앱에서 BLE로 직접 지정하는 값이라 카메라
-쪽과 무관합니다 (그쪽은 hardware/relay_controller.py + BLE 서버가
+쪽과 무관합니다 (그쪽은 hardware/relay_control.py + BLE 서버가
 담당).
 """
 

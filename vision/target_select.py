@@ -1,8 +1,8 @@
 """
-vision/target_selector.py
+vision/target_select.py
 
 다중 인원 감지 시 추적 대상 1인을 선정 — 순수 계산 모듈.
-입력은 pose_estimator.infer()가 낸 result["people"] 리스트, 출력은 선택된
+입력은 pose_estimate.infer()가 낸 result["people"] 리스트, 출력은 선택된
 사람의 인덱스(순수 데이터)이다.
 
 [선정 규칙]

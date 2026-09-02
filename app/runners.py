@@ -39,12 +39,12 @@ from dbus_fast.message import Message
 
 from config import CFG, TARGET_MODES
 from control.body_wind import BodyPatrolScenario, MotionGate, body_wind_level
-from control.control_signal_generator import (apply_deadzone, clamp_angle,
+from control.control_signal import (apply_deadzone, clamp_angle,
                                               compute_pan_angle,
                                               compute_tilt_angle)
-from control.recognition_reporter import RecognitionReporter
+from control.recognition_report import RecognitionReporter
 from vision.region_filter import RegionFilter
-from vision.target_selector import (DEFAULT_MATCH_RADIUS, person_center,
+from vision.target_select import (DEFAULT_MATCH_RADIUS, person_center,
                                     select_target)
 from app.tracking import (_INVISIBLE, _axes_idle, _draw_overlay, chest_point,
                           run_tracking)

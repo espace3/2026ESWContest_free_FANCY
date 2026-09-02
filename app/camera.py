@@ -2,7 +2,7 @@
 app/camera.py - 카메라 백엔드 · 포즈 시각화 · MJPEG 웹스트림
 
 이 파일은 계산 로직을 포함하지 않습니다. 실제 추정/선정/추적 로직은
-vision/pose_estimator.py, vision/target_selector.py, vision/region_filter.py에
+vision/pose_estimate.py, vision/target_select.py, vision/region_filter.py에
 있고, 여기서는 카메라를 열어 그 결과를 화면/웹에 보여주기만 합니다
 (하드웨어 캡처 + 시각화). 같은 vision 모듈을 app/main.py(실제 구동 코드)에서도
 그대로 가져다 씁니다.
@@ -36,8 +36,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
 
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
-from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
-from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
+from vision.pose_estimate import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
+from vision.target_select import select_target, person_center, DEFAULT_MATCH_RADIUS
 from vision.region_filter import RegionFilter
 
 # ── 색상 ─────────────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ def draw_pose(frame: np.ndarray, people: list[dict], selected_idx: int | None) -
                 cv2.circle(vis, (cx, cy), pt_radius, pt_color, -1)
 
         # 대상 선정에 실제로 쓰이는 bbox — 모델이 예측한 것 (person["model_bbox"]).
-        # 선정은 면적이 아니라 이 사각형의 중심만 본다 (vision/target_selector.py).
+        # 선정은 면적이 아니라 이 사각형의 중심만 본다 (vision/target_select.py).
         mb = person.get("model_bbox")
         if mb is not None:
             x0, y0, x1, y1 = mb

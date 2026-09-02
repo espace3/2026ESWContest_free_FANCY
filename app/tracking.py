@@ -179,7 +179,7 @@ def _open_motor(dry_run: bool, state_path=None, *, timing: bool = False,
     if dry_run:
         print("[motor] DRY-RUN — 실제 모터를 구동하지 않습니다 (각도 계산만).")
         return _DryMotor()
-    from hardware.motor_controller import MotorController
+    from hardware.motor_control import MotorController
     return MotorController(CFG, state_path=state_path, timing=timing,
                            pin_pulse_core=pin_pulse_core, rt=rt)
 
@@ -221,9 +221,9 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
     세로로만 갈리고 좌우로는 같은 자리라, 팬은 어느 부위를 겨눠도 같은 각도가
     나온다. 그래서 팬·팬틸트는 가슴(어깨 중점) 고정이다.
     """
-    from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
+    from vision.target_select import select_target, person_center, DEFAULT_MATCH_RADIUS
     from vision.region_filter import RegionFilter
-    from control.control_signal_generator import (apply_deadzone, clamp_angle,
+    from control.control_signal import (apply_deadzone, clamp_angle,
                                                   compute_pan_angle, compute_tilt_angle)
     from app.camera import _read_frame, draw_pose
 

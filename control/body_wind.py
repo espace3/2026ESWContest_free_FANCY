@@ -3,7 +3,7 @@ control/body_wind.py
 
 부위 인식 모드(0x03)의 순수 계산 모듈 — GPIO/BlueZ/카메라를 import하지 않는다.
 입력은 프레임별 관측 dict(장부 각도·부위 좌표), 출력은 팬/틸트 목표 각도(degree).
-실제 모터 구동은 hardware/motor_controller.py 몫이다. main.py의 부위 러너가 쓴다.
+실제 모터 구동은 hardware/motor_control.py 몫이다. main.py의 부위 러너가 쓴다.
 
   - BodyPatrolScenario: 전신 추적 상태기계 (매핑 → 순찰, 이탈 시 재조준·탐색)
   - body_wind_level:    풍속 중재 — 지금 겨누는 부위의 저장 세기
@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from control.control_signal_generator import (clamp_angle, compute_pan_angle,
+from control.control_signal import (clamp_angle, compute_pan_angle,
                                               compute_tilt_angle)
 
 

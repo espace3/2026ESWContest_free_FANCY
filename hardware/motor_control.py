@@ -1,8 +1,8 @@
 """
-hardware/motor_controller.py
+hardware/motor_control.py
 
 팬틸트 스테퍼 모터 구동 — 하드웨어 호출 전용 모듈.
-control/control_signal_generator.py가 계산한 각도(degree)를 받아 실제로
+control/control_signal.py가 계산한 각도(degree)를 받아 실제로
 GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직을 넣지 말 것.
 핀 배정·드라이버(TMC2209)·마이크로스텝·램프 파라미터는 config.py의
 "pins"/"stepper"에 있다 (모터 단독 실기 검증을 마친 값).
@@ -575,7 +575,7 @@ class MotorController:
 
     def move_to(self, pan_angle_deg: float, tilt_angle_deg: float) -> None:
         """목표 각도로 이동 시작 — 논블로킹, 즉시 리턴. 이동 중 다시 부르면
-        최신 목표로 갈아탄다. control_signal_generator에서 이미 회전 금지 구역
+        최신 목표로 갈아탄다. control_signal에서 이미 회전 금지 구역
         밖으로 clamp된 각도가 들어온다고 가정한다 (여기서는 재계산하지 않음)."""
         # 각도 → 최근접 정수 스텝 (반올림 오차는 1스텝 = pan 0.1125° 미만)
         self.pan.set_target_steps(round(pan_angle_deg / self.pan.deg_per_step))

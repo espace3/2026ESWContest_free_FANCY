@@ -1,5 +1,5 @@
 """
-vision/pose_estimator.py
+vision/pose_estimate.py
 
 MoveNet MultiPose Lightning 기반 포즈 추정 — 순수 계산 모듈.
 GPIO/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
@@ -7,7 +7,7 @@ GPIO/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
 좌표(dict) — 순수 데이터.
 
 이 모듈은 "보이는 사람 전부"를 반환하는 것까지만 책임진다. 그중 추적할 1명을
-고르는 건 target_selector.select_target()의 역할이고, 시간에 따른 스무딩은
+고르는 건 target_select.select_target()의 역할이고, 시간에 따른 스무딩은
 region_filter.RegionFilter의 역할이다 (역할 분리).
 
 카메라 캡처, 시각화, 모터/BLE 제어는 이 모듈이 아니라

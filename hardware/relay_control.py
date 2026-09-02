@@ -1,5 +1,5 @@
 """
-hardware/relay_controller.py
+hardware/relay_control.py
 
 선풍기 풍속 릴레이(TS0011 4ch) 구동 — 하드웨어 호출 전용 모듈.
 BLE로 받은 풍속 단계(0=정지, 1=미풍, 2=약풍, 3=강풍)를 릴레이 IN1~IN3
@@ -21,7 +21,7 @@ GPIO 출력으로 내보내는 역할만 한다. "어느 부위의 풍속을 지
 break-before-make: 상태 전환은 항상 "① 전부 오픈 → ② guard_s 대기 →
 ③ 최신 목표 재확인 → ④ 하나만 닫기" 순서다 (모터 back-EMF/접점 아크/
 역전류 방지). BLE async 콜백을 guard sleep으로 막지 않도록
-motor_controller의 "최신 목표만 유지 + 전용 워커 스레드" 구조를 축소
+motor_control의 "최신 목표만 유지 + 전용 워커 스레드" 구조를 축소
 차용했다 — set_speed()는 목표만 갱신하고 즉시 리턴, 같은 목표 반복은
 무시한다(릴레이 채터 방지).
 
@@ -41,7 +41,7 @@ import time
 
 import lgpio
 
-from hardware.motor_controller import open_chip
+from hardware.motor_control import open_chip
 
 
 class FanRelay:

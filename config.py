@@ -63,7 +63,7 @@ CFG: dict = {
 
     # ── 릴레이 (TS0011 4ch — 선풍기 풍속 220V 탭 단속) ──────────────────────
     # 옵토 미사용. IN을 LOW로 당기면 코일 여자 → NO-COM 닫힘 = 탭 ON (active-LOW).
-    # 동시에 하나의 채널만 닫는다 (전부 오픈 = 정지). hardware/relay_controller.py 참고.
+    # 동시에 하나의 채널만 닫는다 (전부 오픈 = 정지). hardware/relay_control.py 참고.
     "relay": {
         # 2026-08-04 실측 확정: active-LOW 기판(LOW=ON).
         "active_high": False,
@@ -112,10 +112,10 @@ CFG: dict = {
 
     # ── 회전 소프트 리밋 (°) ─────────────────────────────────────────────────
     # 회전 금지 구역(HW deadline)은 조립 후 확정 (docs/hardware_todo.md).
-    # control 쪽 clamp_angle()에 물려서 쓴다 (motor_controller는 재검사하지 않음).
+    # control 쪽 clamp_angle()에 물려서 쓴다 (motor_control는 재검사하지 않음).
     #
     # ⚠ 틸트 부호: +가 아래(헤드가 숙임), -가 위다
-    #   (control_signal_generator.compute_tilt_angle — 화면 아래일수록 양수).
+    #   (control_signal.compute_tilt_angle — 화면 아래일수록 양수).
     # ⚠ max(+, 아래)는 **+15를 절대 넘기지 말 것** — 헤드가 15도보다 더 숙이면
     #   기구가 간섭해 파손된다 (2026-08-28 사용자 확인, 실측 한계).
     #   min(-, 위)은 여유가 있어 -25까지 확장했다 (같은 날 확인).

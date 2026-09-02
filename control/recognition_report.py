@@ -1,5 +1,5 @@
 """
-control/recognition_reporter.py
+control/recognition_report.py
 
 객체 인식 Status(BLE notify 0x02)를 **언제 보낼지** 정하는 순수 판정 모듈 —
 GPIO/BlueZ/카메라를 import하지 않는다. 부위 모드 러너와 일반 타겟 모드

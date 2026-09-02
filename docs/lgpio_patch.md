@@ -1,6 +1,6 @@
 # lgpio 펄스 타이밍 — 부하 시 지터/탈조 문제
 
-**상태: 해결 (2026-08-07). 대책은 `hardware/motor_controller.py`의 `open_chip()` 안에 있다.**
+**상태: 해결 (2026-08-07). 대책은 `hardware/motor_control.py`의 `open_chip()` 안에 있다.**
 
 Pi 5에서 스테퍼 펄스를 lgpio로 만들 때 생기는 타이밍 문제를 한 곳에 모아둔 문서.
 `docs/hardware_todo.md`의 "tilt f_max 실효값 확정" 항목이 여기를 참조한다.
@@ -95,7 +95,7 @@ $ python3 -c "import lgpio; print(lgpio.__file__)"
 
 **① 실측 — `--timing` (권장).** 진짜 시스템에서 직접 잰다. 배선 불필요.
 `_sched_end`가 이미 "큐에 넣은 펄스가 다 나갈 예정 시각"을 들고 있으므로 실제 완료
-시각과 비교하면 된다 (`motor_controller._Axis._execute`).
+시각과 비교하면 된다 (`motor_control._Axis._execute`).
 
     계획   = Σ(청크 스텝수 / 주파수)      실측 = 첫 청크 큐잉 ~ 마지막 펄스 송출 완료
     드리프트 = 실측 - 계획 > 0  →  펄스 열이 늘어졌다 = 펄스 스레드가 선점당했다
@@ -135,7 +135,7 @@ python main.py --axis pantilt --timing --no-rt --no-pin  # 대책 끄고 비교
 언더런은 어느 조건에서도 0이었다 — **큐가 비는 게 아니라 펄스 스레드 자체가 느려진
 것**이라는 최종 확인이다.
 
-## 적용된 대책 (`motor_controller.open_chip()`)
+## 적용된 대책 (`motor_control.open_chip()`)
 
 스레드는 **만든 쪽의 어피니티 마스크와 스케줄링 정책을 물려받는다** (glibc의
 `pthread_create` 기본값이 `PTHREAD_INHERIT_SCHED`). 이 상속을 쓰면 tid를 알아낼 필요도,

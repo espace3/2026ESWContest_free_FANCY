@@ -1,7 +1,7 @@
 """
 tools/drive_motor.py - 팬틸트 모터 단독 구동 (각도 캘리브레이션 · 펄스 타이밍 실측)
 
-계산 로직 없음. hardware/motor_controller.py의 MotorController(논블로킹)에 이동
+계산 로직 없음. hardware/motor_control.py의 MotorController(논블로킹)에 이동
 명령을 보내고 결과(소요 시간·최종 장부 위치)를 출력만 한다. 정확도 판정은 축에
 붙인 마커/각도기 눈금과 출력된 장부 각도를 사람이 대조해서 한다.
 
@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import CFG
-from hardware.motor_controller import MotorController
+from hardware.motor_control import MotorController
 
 
 def make_mover(mc: MotorController, axis: str):

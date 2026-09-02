@@ -64,8 +64,7 @@ from config import CFG
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
-from app.tracking import (add_state_args, open_motor_from_args, run_pan_tracking,
-                           run_tilt_tracking, run_pantilt_tracking)
+from app.tracking import add_state_args, open_motor_from_args, run_tracking
 from app.camera import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
 
@@ -134,45 +133,19 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
         time.sleep(0.3)
 
     fov_cfg = CFG["fov"]
-
-    if axis == "pan":
-        fov_h = fov_cfg["h"]
-        sign = -1.0 if args.invert_pan else 1.0
-
-        def _run(stop_event):
-            cam, backend = _open_cam()
-            try:
-                run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                                 fov_h, sign, web_state=web_state)
-            finally:
-                _release_cam(cam, backend)
-
-        return _run
-
-    if axis == "tilt":
-        fov_v = fov_cfg["v"]
-        sign = -1.0 if args.invert_tilt else 1.0
-        aim_key = "upper" if args.region == "chest" else args.region
-
-        def _run(stop_event):
-            cam, backend = _open_cam()
-            try:
-                run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                                  fov_v, sign, aim_key, web_state=web_state)
-            finally:
-                _release_cam(cam, backend)
-
-        return _run
-
     fov_h, fov_v = fov_cfg["h"], fov_cfg["v"]
     sign_pan = -1.0 if args.invert_pan else 1.0
     sign_tilt = -1.0 if args.invert_tilt else 1.0
+    # 부위 선택은 틸트에서만 의미가 있다 (팬은 어느 부위를 겨눠도 같은 각도).
+    aim_key = args.region if (axis == "tilt" and args.region != "chest") else "upper"
 
     def _run(stop_event):
         cam, backend = _open_cam()
         try:
-            run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                                 fov_h, fov_v, sign_pan, sign_tilt, web_state=web_state)
+            run_tracking(cam, backend, detector, tracker, mc, args, stop_event,
+                         axis=axis, fov_h=fov_h, fov_v=fov_v,
+                         sign_pan=sign_pan, sign_tilt=sign_tilt,
+                         aim_key=aim_key, web_state=web_state)
         finally:
             _release_cam(cam, backend)
 
@@ -352,7 +325,6 @@ def main() -> None:
     p.add_argument("--deadzone-tilt", type=float, default=_TRK["deadzone"]["tilt"])
     p.add_argument("--target-cx", type=float, default=_TRK["target"]["cx"])
     p.add_argument("--target-cy", type=float, default=_TRK["target"]["cy"])
-    p.add_argument("--limit", type=float, default=100.0, help="--axis pan 전용 소프트 클램프 ±°")
     lim = CFG["limits"]
     p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
@@ -395,7 +367,7 @@ def main() -> None:
     if args.tilt_min >= args.tilt_max:
         print("[ERROR] --tilt-min은 --tilt-max보다 작아야 합니다")
         sys.exit(1)
-    if args.axis == "pantilt" and args.pan_min >= args.pan_max:
+    if args.axis in ("pan", "pantilt") and args.pan_min >= args.pan_max:
         print("[ERROR] --pan-min은 --pan-max보다 작아야 합니다")
         sys.exit(1)
 

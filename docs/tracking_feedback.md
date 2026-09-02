@@ -42,7 +42,7 @@
 팬은 가로 오차(cx), 틸트는 세로 오차(cy)를 보정하며 서로 직교한다. 하지만 두 축이
 **서로 다른 순간의 관측이나 위치**로 움직이면 조준이 어긋난다. 그래서 한 루프에서
 관측 하나를 읽고, 두 축의 목표각을 함께 계산해, 한 번의 `move_to(pan, tilt)`로
-내보낸다 (`app/tracking.py`의 `run_pantilt_tracking`).
+내보낸다 (`app/tracking.py` 의 `run_tracking`, axis="pantilt").
 
 ## 잡음이 모터로 새지 않게 — 데드존은 각도 단계에
 
@@ -58,6 +58,6 @@
 | 위치 | 역할 |
 |---|---|
 | `control/control_signal_generator.py` | `compute_pan_angle` / `compute_tilt_angle` / `clamp_angle` / `apply_deadzone` |
-| `app/tracking.py` | 축별 닫힌 루프 본문 (`run_pan_tracking` / `run_tilt_tracking` / `run_pantilt_tracking`) |
+| `app/tracking.py` | 닫힌 루프 본문 `run_tracking(axis=...)` — pan / tilt / pantilt 공용 |
 | `control/fullbody_scenario.py` | 위 원리를 전신 순찰 상태기계로 확장 |
 | `config.py` `"fov"` / `"limits"` | 환산 상수와 소프트 리밋 |

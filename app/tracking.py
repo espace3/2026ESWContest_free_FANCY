@@ -108,237 +108,30 @@ def open_motor_from_args(args):
                        rt=not getattr(args, "no_rt", False))
 
 
-def run_pan_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                      fov_h, sign, web_state=None) -> None:
-    """팬 닫힌 루프 (팬만 제어, 틸트는 0° 고정) — docs/tracking_feedback.md."""
-    from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
-    from control.control_signal_generator import compute_pan_angle, apply_deadzone, clamp_angle
-    from app.camera import _read_frame, draw_pose
+def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
+                 axis, fov_h, fov_v, sign_pan, sign_tilt, aim_key="upper",
+                 web_state=None) -> None:
+    """카메라 기반 닫힌 루프 추적 — docs/tracking_feedback.md.
 
-    prev_center: tuple[float, float] | None = None
-    last_sent = 0.0
-    lost = True
-    fps_hist: list[float] = []
-    t_prev = time.time()
-    last_log = time.time()
+    axis 로 제어할 축을 고른다. 안 쓰는 축은 0° 로 고정한다.
+        "pan"     팬만 (틸트 0° 고정)
+        "tilt"    틸트만 (팬 0° 고정) — aim_key 로 겨눌 부위를 고를 수 있다
+        "pantilt" 두 축 동시. 한 프레임 = 한 관측 = 한 명령으로 내보내
+                  두 축이 서로 다른 순간의 관측으로 어긋나지 않게 한다.
 
-    while not stop_event.is_set():
-        t0 = time.time()
-        frame = _read_frame(cam, backend)
-        if frame is None:
-            if args.web and web_state:
-                web_state.update_stall(["no frames from the camera.",
-                                        "try --no-rpicam / --opencv, or check camera wiring."])
-            time.sleep(0.03)
-            continue
-
-        people = detector.infer(frame)["people"]
-
-        target_idx = (
-            select_target(people, prev_center=prev_center)
-            if people else None
-        )
-
-        if target_idx is not None:
-            kps = people[target_idx]["keypoints"]
-            new_center = person_center(people[target_idx])
-            if (prev_center is not None and new_center is not None
-                    and ((new_center[0] - prev_center[0]) ** 2
-                         + (new_center[1] - prev_center[1]) ** 2) ** 0.5
-                    > DEFAULT_MATCH_RADIUS):
-                tracker.reset()
-            chest = chest_point(kps, args.conf)
-            regions = {"head": _INVISIBLE, "upper": chest, "lower": _INVISIBLE}
-            prev_center = new_center
-            tracker_input = {"detected": True, "regions": regions}
-        else:
-            tracker_input = {"detected": False,
-                             "regions": {"head": _INVISIBLE, "upper": _INVISIBLE,
-                                         "lower": _INVISIBLE}}
-
-        chest_s = tracker.update(tracker_input)["upper"]
-
-        cur_pan = mc.current_position()[0]
-        err_deg = None
-        if chest_s["visible"]:
-            if lost:
-                print(f"\n[track] 목표 재획득 — 추적 재개 (idx={target_idx})")
-                lost = False
-            err_cx = chest_s["cx"] - (args.target_cx - 0.5)
-            err_deg = sign * compute_pan_angle(err_cx, fov_h)
-            raw_target = cur_pan + args.gain_pan * err_deg
-            raw_target = clamp_angle(raw_target, -args.limit, args.limit)
-            gated = apply_deadzone(raw_target, last_sent, args.deadzone_pan)
-            if gated != last_sent:
-                mc.move_to(gated, 0.0)
-                last_sent = gated
-        else:
-            if not lost:
-                print("\n[track] 목표 상실 → 대기 (카메라에 사람이 잡히면 재개)")
-                lost = True
-
-        dt = time.time() - t_prev
-        t_prev = time.time()
-        fps_hist.append(1.0 / dt if dt > 0 else 0.0)
-        if len(fps_hist) > 30:
-            fps_hist.pop(0)
-        fps = sum(fps_hist) / len(fps_hist)
-
-        if time.time() - last_log >= 1.0:
-            err_s = f"{err_deg:+6.2f}" if err_deg is not None else "  --  "
-            print(f"\r[{time.strftime('%H:%M:%S')}] "
-                  f"people={len(people)} target={target_idx if target_idx is not None else '-':<3} "
-                  f"{'LOST' if lost else 'TRACK'}  "
-                  f"err={err_s}°  pan_cur={cur_pan:+7.2f}° pan_cmd={last_sent:+7.2f}°  "
-                  f"fps={fps:4.1f}  ", end="", flush=True)
-            last_log = time.time()
-
-        if not args.no_window or args.web:
-            vis = draw_pose(frame, people, target_idx)
-            h, w = vis.shape[:2]
-            tx = int(args.target_cx * w)
-            cv2.line(vis, (tx, 0), (tx, h), (0, 210, 230), 1)
-            if chest_s["visible"]:
-                cx, cy = int(chest_s["cx"] * w), int(chest_s["cy"] * h)
-                cv2.circle(vis, (cx, cy), 14, (0, 200, 60), 3)
-                cv2.line(vis, (cx, cy), (tx, cy), (0, 200, 60), 2)
-            status = "LOST (standby)" if lost else f"TRACK err={err_deg:+.1f}deg"
-            cv2.putText(vis, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (0, 210, 230), 2)
-            cv2.putText(vis, f"pan_cmd {last_sent:+.1f}deg  fps {fps:.1f}",
-                        (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 200, 0), 2)
-            if args.web and web_state:
-                web_state.update(vis)
-            if not args.no_window:
-                cv2.imshow("Target Fan | Pan Tracking", vis)
-                if (cv2.waitKey(1) & 0xFF) == ord("q"):
-                    break
-        if args.no_window:
-            time.sleep(max(0.0, 0.02 - (time.time() - t0)))
-
-
-def run_tilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                       fov_v, sign, aim_key, web_state=None) -> None:
-    """틸트 닫힌 루프 (틸트만 제어, 팬은 0° 고정) — docs/tracking_feedback.md."""
-    from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
-    from vision.pose_tracker import PoseTracker
-    from control.control_signal_generator import apply_deadzone, clamp_angle, compute_tilt_angle
-    from app.camera import _read_frame, draw_pose
-
-    prev_center: tuple[float, float] | None = None
-    last_sent = 0.0
-    lost = True
-    fps_hist: list[float] = []
-    t_prev = time.time()
-    last_log = time.time()
-
-    while not stop_event.is_set():
-        t0 = time.time()
-        frame = _read_frame(cam, backend)
-        if frame is None:
-            if args.web and web_state:
-                web_state.update_stall(["no frames from the camera.",
-                                        "try --no-rpicam / --opencv, or check camera wiring."])
-            time.sleep(0.03)
-            continue
-
-        people = detector.infer(frame)["people"]
-        target_idx = (
-            select_target(people, prev_center=prev_center)
-            if people else None
-        )
-
-        if target_idx is not None:
-            kps = people[target_idx]["keypoints"]
-            new_center = person_center(people[target_idx])
-            if (prev_center is not None and new_center is not None
-                    and ((new_center[0] - prev_center[0]) ** 2
-                         + (new_center[1] - prev_center[1]) ** 2) ** 0.5
-                    > DEFAULT_MATCH_RADIUS):
-                tracker.reset()
-            prev_center = new_center
-            if args.region == "chest":
-                regions = {"head": _INVISIBLE, "upper": chest_point(kps, args.conf),
-                          "lower": _INVISIBLE}
-            else:
-                regions = people[target_idx]["regions"]
-            tracker_input = {"detected": True, "regions": regions}
-        else:
-            tracker_input = {"detected": False,
-                             "regions": {k: _INVISIBLE for k in PoseTracker.REGIONS}}
-
-        aim = tracker.update(tracker_input)[aim_key]
-
-        cur_tilt = mc.current_position()[1]
-        err_deg = None
-        at_limit = False
-        if aim["visible"]:
-            if lost:
-                print(f"\n[track] 목표 재획득 — 추적 재개 (idx={target_idx})")
-                lost = False
-            err_cy = aim["cy"] - (args.target_cy - 0.5)
-            err_deg = sign * compute_tilt_angle(err_cy, fov_v)
-            raw_target = clamp_angle(cur_tilt + args.gain_tilt * err_deg,
-                                     args.tilt_min, args.tilt_max)
-            at_limit = raw_target in (args.tilt_min, args.tilt_max)
-            gated = apply_deadzone(raw_target, last_sent, args.deadzone_tilt)
-            if gated != last_sent:
-                mc.move_to(0.0, gated)
-                last_sent = gated
-        else:
-            if not lost:
-                print("\n[track] 목표 상실 → 대기 (카메라에 사람이 잡히면 재개)")
-                lost = True
-
-        dt = time.time() - t_prev
-        t_prev = time.time()
-        fps_hist.append(1.0 / dt if dt > 0 else 0.0)
-        if len(fps_hist) > 30:
-            fps_hist.pop(0)
-        fps = sum(fps_hist) / len(fps_hist)
-
-        if time.time() - last_log >= 1.0:
-            err_s = f"{err_deg:+6.2f}" if err_deg is not None else "  --  "
-            print(f"\r[{time.strftime('%H:%M:%S')}] "
-                  f"people={len(people)} target={target_idx if target_idx is not None else '-':<3} "
-                  f"{'LOST ' if lost else 'LIMIT' if at_limit else 'TRACK'}  "
-                  f"err={err_s}°  tilt_cur={cur_tilt:+6.2f}° tilt_cmd={last_sent:+6.2f}°  "
-                  f"fps={fps:4.1f}  ", end="", flush=True)
-            last_log = time.time()
-
-        if not args.no_window or args.web:
-            vis = draw_pose(frame, people, target_idx)
-            h, w = vis.shape[:2]
-            ty = int(args.target_cy * h)
-            cv2.line(vis, (0, ty), (w, ty), (0, 210, 230), 1)
-            if aim["visible"]:
-                cx, cy = int(aim["cx"] * w), int(aim["cy"] * h)
-                cv2.circle(vis, (cx, cy), 14, (0, 200, 60), 3)
-                cv2.line(vis, (cx, cy), (cx, ty), (0, 200, 60), 2)
-            status = ("LOST (standby)" if lost
-                      else f"{'LIMIT ' if at_limit else ''}TRACK err={err_deg:+.1f}deg")
-            cv2.putText(vis, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (0, 210, 230), 2)
-            cv2.putText(vis, f"tilt_cmd {last_sent:+.1f}deg  fps {fps:.1f}",
-                        (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 200, 0), 2)
-            if args.web and web_state:
-                web_state.update(vis)
-            if not args.no_window:
-                cv2.imshow("Target Fan | Tilt Tracking", vis)
-                if (cv2.waitKey(1) & 0xFF) == ord("q"):
-                    break
-        if args.no_window:
-            time.sleep(max(0.0, 0.02 - (time.time() - t0)))
-
-
-def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
-                          fov_h, fov_v, sign_pan, sign_tilt, web_state=None) -> None:
-    """팬+틸트 동시 닫힌 루프 (한 관측 = 한 명령) — docs/tracking_feedback.md."""
+    부위 선택(aim_key)이 틸트에서만 의미 있는 이유: 머리·상체·하체는 화면에서
+    세로로만 갈리고 좌우로는 같은 자리라, 팬은 어느 부위를 겨눠도 같은 각도가
+    나온다. 그래서 팬·팬틸트는 가슴(어깨 중점) 고정이다.
+    """
     from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
     from vision.pose_tracker import PoseTracker
     from control.control_signal_generator import (apply_deadzone, clamp_angle,
                                                   compute_pan_angle, compute_tilt_angle)
     from app.camera import _read_frame, draw_pose
+
+    use_pan = axis in ("pan", "pantilt")
+    use_tilt = axis in ("tilt", "pantilt")
+    title = {"pan": "Pan", "tilt": "Tilt", "pantilt": "Pan+Tilt"}[axis]
 
     prev_center: tuple[float, float] | None = None
     last_pan = last_tilt = 0.0
@@ -370,35 +163,45 @@ def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                     and ((new_center[0] - prev_center[0]) ** 2
                          + (new_center[1] - prev_center[1]) ** 2) ** 0.5
                     > DEFAULT_MATCH_RADIUS):
-                tracker.reset()
+                tracker.reset()   # 대상 교체 → 스무딩 리셋 (허공 미끄러짐 방지)
             prev_center = new_center
-            regions = {"head": _INVISIBLE, "upper": chest_point(kps, args.conf),
-                      "lower": _INVISIBLE}
+            if aim_key == "upper":
+                regions = {"head": _INVISIBLE, "upper": chest_point(kps, args.conf),
+                           "lower": _INVISIBLE}
+            else:
+                regions = people[target_idx]["regions"]
             tracker_input = {"detected": True, "regions": regions}
         else:
             tracker_input = {"detected": False,
                              "regions": {k: _INVISIBLE for k in PoseTracker.REGIONS}}
 
-        chest = tracker.update(tracker_input)["upper"]
+        aim = tracker.update(tracker_input)[aim_key]
 
         cur_pan, cur_tilt = mc.current_position()
         ep = et = None
-        if chest["visible"]:
+        at_limit = False
+        if aim["visible"]:
             if lost:
                 print(f"\n[track] 목표 재획득 — 추적 재개 (idx={target_idx})")
                 lost = False
-            ep = sign_pan * compute_pan_angle(chest["cx"] - (args.target_cx - 0.5), fov_h)
-            et = sign_tilt * compute_tilt_angle(chest["cy"] - (args.target_cy - 0.5), fov_v)
-            pan_t = clamp_angle(cur_pan + args.gain_pan * ep, args.pan_min, args.pan_max)
-            tilt_t = clamp_angle(cur_tilt + args.gain_tilt * et, args.tilt_min, args.tilt_max)
-            pan_g = apply_deadzone(pan_t, last_pan, args.deadzone_pan)
-            tilt_g = apply_deadzone(tilt_t, last_tilt, args.deadzone_tilt)
+            pan_t, tilt_t = last_pan, last_tilt
+            if use_pan:
+                ep = sign_pan * compute_pan_angle(aim["cx"] - (args.target_cx - 0.5), fov_h)
+                pan_t = clamp_angle(cur_pan + args.gain_pan * ep,
+                                    args.pan_min, args.pan_max)
+            if use_tilt:
+                et = sign_tilt * compute_tilt_angle(aim["cy"] - (args.target_cy - 0.5), fov_v)
+                tilt_t = clamp_angle(cur_tilt + args.gain_tilt * et,
+                                     args.tilt_min, args.tilt_max)
+                at_limit = tilt_t in (args.tilt_min, args.tilt_max)
+            pan_g = apply_deadzone(pan_t, last_pan, args.deadzone_pan) if use_pan else 0.0
+            tilt_g = apply_deadzone(tilt_t, last_tilt, args.deadzone_tilt) if use_tilt else 0.0
             if (pan_g, tilt_g) != (last_pan, last_tilt):
                 mc.move_to(pan_g, tilt_g)
                 last_pan, last_tilt = pan_g, tilt_g
         else:
             if not lost:
-                print("\n[track] 목표 상실 → 대기 (두 축 정지, 사람이 잡히면 재개)")
+                print("\n[track] 목표 상실 → 대기 (카메라에 사람이 잡히면 재개)")
                 lost = True
 
         dt = time.time() - t_prev
@@ -409,11 +212,17 @@ def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
         fps = sum(fps_hist) / len(fps_hist)
 
         if time.time() - last_log >= 1.0:
-            es = (f"{ep:+5.1f}/{et:+5.1f}" if ep is not None else "  --/--  ")
+            es = "/".join(f"{e:+5.1f}" if e is not None else "  -- "
+                          for e in ((ep,) if not use_tilt else (et,) if not use_pan else (ep, et)))
+            pos = []
+            if use_pan:
+                pos.append(f"pan={cur_pan:+7.2f}°>{last_pan:+7.2f}°")
+            if use_tilt:
+                pos.append(f"tilt={cur_tilt:+6.2f}°>{last_tilt:+6.2f}°")
             print(f"\r[{time.strftime('%H:%M:%S')}] "
                   f"people={len(people)} target={target_idx if target_idx is not None else '-':<3} "
-                  f"{'LOST ' if lost else 'TRACK'}  err(p/t)={es}°  "
-                  f"pan={cur_pan:+7.2f}°>{last_pan:+7.2f}° tilt={cur_tilt:+6.2f}°>{last_tilt:+6.2f}°  "
+                  f"{'LOST ' if lost else 'LIMIT' if at_limit else 'TRACK'}  "
+                  f"err={es}°  {' '.join(pos)}  "
                   f"fps={fps:4.1f}  ", end="", flush=True)
             last_log = time.time()
 
@@ -421,21 +230,33 @@ def run_pantilt_tracking(cam, backend, detector, tracker, mc, args, stop_event,
             vis = draw_pose(frame, people, target_idx)
             h, w = vis.shape[:2]
             tx, ty = int(args.target_cx * w), int(args.target_cy * h)
-            cv2.drawMarker(vis, (tx, ty), (0, 210, 230), cv2.MARKER_CROSS, 22, 1)
-            if chest["visible"]:
-                cx, cy = int(chest["cx"] * w), int(chest["cy"] * h)
+            # 조준 기준선 — 제어하는 축 방향으로만 긋는다.
+            if use_pan and use_tilt:
+                cv2.drawMarker(vis, (tx, ty), (0, 210, 230), cv2.MARKER_CROSS, 22, 1)
+            elif use_pan:
+                cv2.line(vis, (tx, 0), (tx, h), (0, 210, 230), 1)
+            else:
+                cv2.line(vis, (0, ty), (w, ty), (0, 210, 230), 1)
+            if aim["visible"]:
+                cx, cy = int(aim["cx"] * w), int(aim["cy"] * h)
                 cv2.circle(vis, (cx, cy), 14, (0, 200, 60), 3)
-                cv2.line(vis, (cx, cy), (tx, ty), (0, 200, 60), 2)
-            status = ("LOST (standby)" if lost
-                      else f"TRACK err={ep:+.1f},{et:+.1f}deg")
+                end = (tx if use_pan else cx, ty if use_tilt else cy)
+                cv2.line(vis, (cx, cy), end, (0, 200, 60), 2)
+            if lost:
+                status = "LOST (standby)"
+            else:
+                errs = ",".join(f"{e:+.1f}" for e in (ep, et) if e is not None)
+                status = f"{'LIMIT ' if at_limit else ''}TRACK err={errs}deg"
             cv2.putText(vis, status, (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 210, 230), 2)
-            cv2.putText(vis, f"pan {last_pan:+.1f}  tilt {last_tilt:+.1f}  fps {fps:.1f}",
+            cmd = "  ".join(([f"pan {last_pan:+.1f}"] if use_pan else [])
+                            + ([f"tilt {last_tilt:+.1f}"] if use_tilt else []))
+            cv2.putText(vis, f"{cmd}  fps {fps:.1f}",
                         (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 200, 0), 2)
             if args.web and web_state:
                 web_state.update(vis)
             if not args.no_window:
-                cv2.imshow("Target Fan | Pan+Tilt Tracking", vis)
+                cv2.imshow(f"Target Fan | {title} Tracking", vis)
                 if (cv2.waitKey(1) & 0xFF) == ord("q"):
                     break
         if args.no_window:

@@ -628,7 +628,6 @@ def main() -> None:
     p.add_argument("--deadzone-tilt", type=float, default=_TRK["deadzone"]["tilt"])
     p.add_argument("--target-cx", type=float, default=_TRK["target"]["cx"])
     p.add_argument("--target-cy", type=float, default=_TRK["target"]["cy"])
-    p.add_argument("--limit", type=float, default=100.0, help="--axis pan 전용 소프트 클램프 ±°")
     lim = CFG["limits"]
     p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
@@ -715,7 +714,7 @@ def main() -> None:
     if args.tilt_min >= args.tilt_max:
         print("[ERROR] --tilt-min은 --tilt-max보다 작아야 합니다")
         sys.exit(1)
-    if args.axis == "pantilt" and args.pan_min >= args.pan_max:
+    if args.axis in ("pan", "pantilt") and args.pan_min >= args.pan_max:
         print("[ERROR] --pan-min은 --pan-max보다 작아야 합니다")
         sys.exit(1)
     if not 0 < args.rotate_span <= min(lim["pan"]["max"], -lim["pan"]["min"]):

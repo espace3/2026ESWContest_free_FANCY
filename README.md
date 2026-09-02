@@ -1,4 +1,4 @@
-# ESW 개인 맞춤형 스마트 선풍기 제어 애플리케이션 (ESW_BLE_app)
+# ESW 개인 맞춤형 스마트 선풍기 제어 애플리케이션
 
 사용자의 위치와 신체 부위를 인식해 맞춤형 바람을 제공하는 **스마트 선풍기**의
 **스마트폰 제어 애플리케이션** 저장소입니다.
@@ -29,18 +29,21 @@
 - **GAP 레이어**: RPi5 = Peripheral(Advertising 송출), 앱 = Central(스캔·연결 개시)
 - **GATT 레이어**: RPi5 = Server(Characteristic 보유), 앱 = Client(읽기/쓰기 요청)
 - 제어 명령(전원, 모드 전환, 풍량 등)은 **저용량·간헐적 송수신**이므로 BLE가 적합
-- RPi 측은 연결 해제 시 **re-advertising**으로 재연결 대기, 비정상 종료 복구 루틴 포함 예정
+- 연결이 끊기면 앱·RPi 양쪽이 **전원 OFF로 수렴**한다 (풍속 정지 + 헤드 0°,0° 파킹).
+  예기치 못한 끊김이면 앱이 30초간 자동 재연결을 시도하고, 성공 시 직전 상태를 복원한다.
+  RPi는 **re-advertising**으로 재연결을 대기한다.
 - 플랫폼별 BLE 스택: Android `BluetoothGatt`, iOS `CoreBluetooth`
 
 ## 3. 애플리케이션 시나리오
 
-1. **전원 제어** — 앱 접속 시 터치로 선풍기 ON/OFF.
-2. **모드 선택** — 선풍기가 ON이면 **기본 모드** / **타겟 모드** 제공.
-3. **기본 모드** — 회전 여부(고정 / 좌우 회전)와 풍량 선택.
-4. **타겟 모드** — 객체 인식 성공 여부 표시 + 풍량 선택.
-   선풍기는 인식된 한 명의 사용자를 추적하며 송풍.
-5. **부위 모드** — 타겟 모드에서 ON 하면 **머리·상체·하체** 부위별 바람 세기 개별 설정.
-   사용자가 이동하면 타겟 모드로 복귀, 정지하면 다시 부위별 제어.
+1. **전원 제어** - 앱 접속 시 터치로 선풍기 ON/OFF.
+2. **모드 선택** - 선풍기가 ON이면 **기본 모드** / **타겟 모드** 제공.
+3. **기본 모드** - 회전 여부(고정 / 좌우 회전)와 풍량 선택.
+4. **타겟 모드** - 객체 인식 성공 여부를 표시하고 풍량을 선택한다.
+   선풍기는 인식된 한 명의 사용자의 **상체를 화면 중앙에 붙잡는 닫힌 루프 추적**으로 송풍.
+   - **부위 인식 ON** - **머리·상체·하체** 부위별 바람 세기를 개별 설정한다.
+     선풍기는 머리 → 상체 → 하체를 순찰하며 부위별 풍속을 적용하고,
+     사용자가 이동하면 추적으로 폴백했다가 잠잠해지면 순찰을 재개한다.
 
 ## 4. 개발 로드맵
 
@@ -55,28 +58,26 @@
 ## 5. 저장소 구조
 
 ```
-lib/
-  main.dart                    진입점 — 상태 초기화 후 앱 실행
-  app.dart                     앱 루트 위젯 · 테마 · 스와이프 설정
+main.dart                 진입점 — 상태 초기화 후 앱 실행
+app.dart                  앱 루트 위젯 · 테마 · 스와이프 설정
 
-  pages/                       화면 — 표시·입력만, 상태는 services/가 소유
-    home_page.dart               홈 화면. 전원 버튼, 기본 ↔ 타겟 모드 전환
-    ble_scan_page.dart           BLE 스캔·연결 디버그 화면
-    basic_mode_page.dart         기본 모드 — 고정/회전 + 바람 세기
-    target_mode_page.dart        타겟 모드 — 인식 상태 표시, 풍량, 부위별 세기
+pages/                    화면 — 표시·입력만, 상태는 services/가 소유
+ ├── home_page.dart         홈 화면 — 전원 버튼, 기본 ↔ 타겟 모드 전환
+ ├── ble_scan_page.dart     BLE 스캔·연결 디버그 화면
+ ├── basic_mode_page.dart   기본 모드 — 고정/회전 + 바람 세기
+ └── target_mode_page.dart  타겟 모드 — 인식 상태, 풍량, 부위별 세기
 
-  services/                    앱 전역 상태 (싱글턴)
-    fan_state_service.dart       설정 주체 — 전원/모드/풍량 보관·영속화·전송·검증
-    ble/
-      ble_protocol.dart          GATT 계약 — UUID·바이트 형식·스냅샷 파싱 (RPi와 공유)
-      ble_connection_service.dart  BLE 연결 — 재시도, write/에코백, 자동 재연결
+services/                앱 전역 상태 (싱글턴)
+ ├── fan_state_service.dart            설정 주체 — 전원/모드/풍량 보관·영속화·전송·검증
+ ├── ble/ble_protocol.dart             GATT 계약 — UUID·바이트 형식·스냅샷 파싱 (RPi와 공유)
+ └── ble/ble_connection_service.dart   BLE 연결 — 재시도, write/에코백, 자동 재연결
 
-  widgets/
-    wind_strength_selector.dart  바람 세기(정지·1~3단) 선택 위젯 — 공용
+widgets/                 공용 위젯
+ └── wind_strength_selector.dart  바람 세기(정지·1~3단) 선택기
 
-android/ ios/                  플랫폼별 러너 프로젝트 (앱 ID com.esw.fan)
-test/widget_test.dart          위젯 테스트 — 전원·모드 전환, 재전송 계약
-my_app/release/esw-fan-v1.0.apk  배포용 APK
+android/ · ios/           플랫폼별 러너 프로젝트 (앱 ID com.esw.fan)
+test/                    위젯 테스트 — 전원·모드 전환, 재전송 계약
+my_app/release/          배포용 APK (esw-fan-v1.0.apk)
 ```
 
 ## 6. 실행 방법

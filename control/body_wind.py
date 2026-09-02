@@ -68,7 +68,7 @@ class BodyPatrolScenario(FullBodyScenario):
         self.default_gap_deg = default_gap_deg   # 머리를 아직 못 봤을 때 쓸 값
         self.gap_alpha = gap_alpha
         self._gap_deg: float | None = None
-        self._aim_hold: float | None = None   # 이동 중 유지할 조준각
+        self._aim_logged: str | None = None   # [aim] 로그를 부위당 한 번만
         # 러너가 매 프레임 갱신하는 값들.
         self.allowed: set[str] = {"head", "upper", "lower"}
         self.levels: dict[str, int] = {}
@@ -284,7 +284,7 @@ class BodyPatrolScenario(FullBodyScenario):
         elif obs["t"] >= self._slot_until:
             self._patrol_i = (self._patrol_i + 1) % len(route)
             region = route[self._patrol_i % len(route)]
-            self._aim_hold = None      # 부위가 바뀌었으니 유지값 폐기
+            self._aim_logged = None    # 새 부위 — 로그 한 줄 다시
             self._slot_until = obs["t"] + self._slot_len(region, cur_tilt)
 
         pan_t = self.body_pan
@@ -294,58 +294,45 @@ class BodyPatrolScenario(FullBodyScenario):
         return pan_t, self._aim_tilt(region, obs, cur_tilt)
 
     def _aim_tilt(self, region: str, obs: dict, cur_tilt: float) -> float:
-        """조준 부위의 틸트 목표각.
+        """조준 부위의 틸트 목표각 — 매 프레임 연속 피드백.
 
-        그 부위가 보이면 절대 조준각을 **관측에서 매번 다시 계산**한다:
-
-            조준각 = 현재각 + 화면오차각 - 조준편향(aim_ratio x gap)
+            목표각 = 현재각 + gain_tilt x (화면오차각 - 조준편향)
             수렴점 = 부위의 실제 각도 - 조준편향
 
-        저장된 웨이포인트 대신 이걸 쓰는 이유: 사용자가 앉거나 다가와도 조준이
-        바로 따라간다. 웨이포인트는 정지 구간 갱신을 기다려야 해서 그동안 낡은
-        각을 쓴다.
+        [왜 gain 을 곱하나] 한 번에 오차 전부를 명령하면(gain=1) 모델 오차가
+        그대로 과잉 이동이 된다 — 화각·장부 지연·카메라 지연이 조금만 어긋나도
+        지나쳤다 되돌아오는 진동이 되고, 얼굴처럼 화면 가장자리에 있는 부위는
+        그 한 번에 프레임 밖으로 나간다 (실기 2026-09-02). gain<1 이면 남은
+        오차를 여러 프레임에 나눠 갚아 그 오차가 감쇠된다.
 
-        ⚠ 이동 중에는 다시 계산하지 않고 직전 목표를 유지한다. 현재각은 장부라
-        이동 중 실제 로터보다 앞서 있고(_LOOKAHEAD_S 분량) 화면은 실제 로터가
-        본 것이라, 매 프레임 재계산하면 그 지연만큼 목표가 진행 방향으로 밀렸다가
-        멈추면 되돌아오는 진동이 된다 (실측 시뮬레이션: 지연 1.5°에서 잔진동
-        1.86°, 정지 때만 재계산하면 0). 정지 상태에서는 장부 = 실제라 편향이 없다.
+        [왜 매 프레임인가] 장부 지연이 상쇄된다. 목표각 = 장부 + gain x 오차 이고
+        모터는 장부가 목표에 닿으면 서므로, 정지 조건이 gain x 오차 = 0 이 되어
+        장부가 실제보다 앞서 있든 말든 수렴점은 오차 0 인 자리다. 웨이포인트처럼
+        절대각을 저장하면 그 편향이 남지만, 매 프레임 다시 재면 남지 않는다.
 
-        ⚠ gain 을 곱한 증분 방식(현재각 + gain x (오차 - 편향))은 쓰지 않는다.
-        데드존이 gain x 오차 를 걸러서 오차 < 데드존/gain (기본 1.0/0.2 = 5°)
-        구간에서 명령이 아예 안 나가 그만큼 못 미친 채 멈춘다.
+        ⚠ 데드존과 짝이다. 명령 변화량이 gain x 오차 라, 데드존이 넓으면
+        오차 < 데드존/gain 구간에서 명령이 아예 안 나가 그만큼 못 미친 채 선다
+        (기본값이면 1.0/0.2 = 5°). 그래서 순찰 중에는 main.py 가 데드존을
+        수렴용(conv_dz)으로 좁혀 사각지대를 1.25° 로 줄인다.
 
-        부위가 안 보이면 웨이포인트 기반 aims()로 떨어진다 — 부위 간 최소 간격과
+        부위가 안 보이면 웨이포인트 기반 aims() 로 떨어진다 — 부위 간 최소 간격과
         리밋 보정이 거기 들어 있어, 지금 못 보는 부위도 겹치지 않게 겨눈다.
         """
-        # fresh(이번 프레임 검출)가 아니라 regions 의 visible 을 본다. regions 는
-        # PoseTracker 가 EMA 로 다듬고 miss_thr(기본 5) 프레임까지 끊김을 메운
-        # 값이라, fresh 까지 요구하면 그 보정이 통째로 무시돼 한 프레임만 놓쳐도
-        # 웨이포인트 폴백으로 떨어진다 (실기 2026-09-02: 앉은 자세에서 "미관측"이
-        # 더 많이 찍힘). 재계산은 정지 상태에서만 하므로 몇 프레임 묵은 좌표를
-        # 써도 카메라가 그동안 움직이지 않는다.
         r = obs["regions"].get(region)
-        if obs["idle"] and r and r["visible"]:
+        if obs["fresh"].get(region) and r and r["visible"]:
             bias = self.aim_ratio.get(region, 0.0) * self.gap_deg
-            aim = self._ct(cur_tilt + self._tilt_err(r["cy"]) - bias)
-            # 슬롯의 첫 계산과, 그 뒤 1° 넘게 바뀐 재계산만 찍는다 — 수렴하는지
-            # (한 번 잡고 조용해지는지) 아니면 계속 흔들리는지가 이걸로 갈린다.
-            if self._aim_hold is None or abs(aim - self._aim_hold) > 1.0:
-                tag = "첫계산" if self._aim_hold is None else "재계산"
+            err = self._tilt_err(r["cy"]) - bias
+            aim = self._ct(cur_tilt + self.gain_tilt * err)
+            if self._aim_logged != region:
                 self.events.append(
-                    f"[aim] {region} {tag} cy={r['cy']:.2f} 편향{bias:+.1f}° "
+                    f"[aim] {region} cy={r['cy']:.2f} 오차{err:+.1f}° "
                     f"장부{cur_tilt:+.1f}° → 조준{aim:+.1f}°")
-            self._aim_hold = aim
+                self._aim_logged = region
             return aim
-        if self._aim_hold is not None:
-            return self._aim_hold
-        src = self.aims().get(region, cur_tilt)
-        if self._aim_hold is None:
-            self.events.append(
-                f"[aim] {region} 미관측(idle={obs['idle']!s:5} "
-                f"visible={bool(r and r['visible'])!s:5}) → 웨이포인트 조준{src:+.1f}°")
-            self._aim_hold = src
-        return src
+        if self._aim_logged != region:
+            self.events.append(f"[aim] {region} 미관측 → 웨이포인트 조준")
+            self._aim_logged = region
+        return self.aims().get(region, cur_tilt)
 
     def step(self, obs: dict):
         if self.state == "patrol":

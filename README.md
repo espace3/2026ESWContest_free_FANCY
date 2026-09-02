@@ -5,8 +5,7 @@
 앱은 **Flutter/Dart**로 작성하며, **BLE(Bluetooth Low Energy)** 로
 선풍기 제어 보드(**Raspberry Pi 5**)와 통신합니다.
 
-> 전체 시스템 제안서: [docs/2026 ESW 제안서.pdf](docs/2026%20ESW%20제안서.pdf)
-> 작업 규칙: [CLAUDE.md](CLAUDE.md) · 개발 기록: [docs/development_log.md](docs/development_log.md)
+> 프로젝트 제안서·BLE 프로토콜 명세 등 세부 문서는 `docs/`에 정리 예정입니다.
 
 ---
 
@@ -63,10 +62,10 @@
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | **Windows 데스크톱 타깃**으로 앱 우선 개발 (UI 골격 + 스와이프 네비게이션) | 완료 |
-| 2 | Windows 앱 ↔ RPi **BLE 통신 검증** — 상세: [docs/ble_todo.md](docs/ble_todo.md), 프로토콜: [docs/ble_protocol.md](docs/ble_protocol.md) | 구현 완료, 실기 검증 대기 |
+| 2 | Windows 앱 ↔ RPi **BLE 통신 검증** | 구현 완료, 실기 검증 대기 |
 | 3 | 스와이프형 모드 전환 등 UX 구체화 | 1차 적용, 개선 중 |
 | 4a | **Android** 빌드 + BLE 권한 설정 (`com.esw.fan`, APK 빌드 성공) | 설정 완료, 실기 검증 대기 |
-| 4b | **iOS** 사전 설정 — 가이드: [docs/ios_setup.md](docs/ios_setup.md) | 설정 완료, 맥북 확보 후 빌드 |
+| 4b | **iOS** 사전 설정 | 설정 완료, 맥북 확보 후 빌드 |
 
 > 최종 대상 플랫폼은 Android/iOS이지만, 개발·검증 편의를 위해
 > **Windows에서 먼저 만들고 BLE 통신을 실증**한 뒤 모바일로 확장했다.
@@ -80,30 +79,26 @@
 ## 5. 저장소 구조
 
 ```
-ESW_BLE_app/
-├── README.md                  ← 이 문서 (프로젝트 전체 안내)
-├── CLAUDE.md                  ← AI 어시스턴트/기여자 작업 규칙
-├── docs/
-│   ├── 2026 ESW 제안서.pdf     ← 프로젝트 제안서 (원본 요구사항)
-│   ├── ble_protocol.md        ← BLE GATT 프로토콜 명세 (앱↔RPi 계약서)
-│   ├── ble_todo.md            ← BLE 통신 검증 체크리스트
-│   ├── ios_setup.md           ← 맥북/Xcode iOS 빌드 가이드 (서명·실기·트러블슈팅)
-│   └── development_log.md     ← 개발 진행 기록
-└── my_app/                    ← Flutter 앱 프로젝트
-    ├── lib/main.dart          ← 앱 진입점 (현재 기본 템플릿 상태)
-    └── ...
+README.md              ← 이 문서 (프로젝트 전체 안내)
+lib/                    ← Dart 소스
+  main.dart               앱 진입점
+  app.dart                앱 루트 위젯 · 라우팅
+  pages/                  화면 (홈 · BLE 스캔 · 기본 모드 · 타겟 모드)
+  services/               상태 관리, BLE 연결/프로토콜
+  widgets/                공용 위젯
+android/ ios/ windows/  ← 플랫폼별 러너 프로젝트
+test/                   ← 위젯 테스트
+release/                ← 배포용 APK (최신 버전으로 갱신)
 ```
 
 ## 6. 실행 방법
 
 ```bash
-cd my_app
 flutter pub get
 flutter run -d windows   # 1차 개발 타깃
 ```
 
 ## 7. 작업 규칙 (요약)
 
-- 모든 작업은 이 저장소 내부에서만 수행한다 ([CLAUDE.md](CLAUDE.md) 참조).
 - 큰 변경 전에는 단계별 계획을 세우고 승인을 받는다.
-- 진행 사항은 [docs/development_log.md](docs/development_log.md)에 기록한다.
+- 진행 사항은 커밋 메시지에 남긴다.

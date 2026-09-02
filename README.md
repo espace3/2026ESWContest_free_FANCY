@@ -1,7 +1,9 @@
-# 2026 ESW Contest 자유공모 — Team FANCY
+# AI 스마트 타겟 선풍기
+
+본 프로젝트는 팀 **FANCY**의 2026 임베디드 소프트웨어 경진대회(자유공모) 출품작입니다.
 
 카메라로 사용자를 실시간 인식·추적해 팬틸트 헤드로 바람 방향을 자동 조준하고,
-**머리 / 상체 / 하체** 3부위를 구분해 부위별 맞춤 풍속을 제공하는 임베디드 시스템 프로젝트입니다.
+**머리 / 상체 / 하체** 3부위를 구분해 부위별 맞춤 풍속을 제공합니다.
 
 ## 프로젝트 목표
 
@@ -197,3 +199,24 @@ FPS는 `app/camera.py`가, 펄스 타이밍은 `--timing` 옵션이 실행 중�
 | [`docs/lgpio_patch.md`](docs/lgpio_patch.md) | 모터가 시끄럽거나 멈출 때 — 세 가지 문제(펄스 지터 / lgpio EINVAL 스핀 / VREF 과다)의 지문과 원인, 배제한 가설 |
 | [`docs/angle_calibration.md`](docs/angle_calibration.md) | 각도 오차의 원인(기어비·백래시·탈조·원점)을 가르는 실험 순서와 보정식 |
 | [`docs/pulse_jitter_data.md`](docs/pulse_jitter_data.md) | 펄스 스레드 지터 실측표 — RT 승격 대책의 근거 |
+
+---
+
+## 데모 영상
+
+<!-- TODO: 유튜브 업로드 후 아래 두 곳의 VIDEO_ID 를 바꿔 주세요. -->
+
+[![데모 영상](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
+
+---
+
+## 팀원
+
+<!-- TODO: 실제 팀원 정보로 채워 주세요. -->
+
+| 이름 | 역할 | 연락처 |
+|---|---|---|
+|  | 임베디드 / 제어 |  |
+|  | 비전 / 추론 |  |
+|  | 앱 (Flutter) |  |
+|  | 하드웨어 / 기구 |  |

@@ -73,7 +73,7 @@
 | 영상 | OpenCV 4.13.0, rpicam-apps (`rpicam-vid`) |
 | BLE | BlueZ 5.82 GATT 서버 — `bluez_peripheral`(pre-release) / `dbus_fast` |
 | GPIO | `lgpio` |
-| 앱 | Flutter (Dart), Android |
+| 앱 | Flutter (Dart), Android, iOS |
 
 ---
 

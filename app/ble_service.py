@@ -37,7 +37,7 @@ cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 �
      (tilt는 0° 유지, 카메라/디텍터 미사용). 각도는 move_to()의 절대각 =
      위치 장부(상태 파일로 영속) 기준이므로 "0,0 기준"이 자동으로 보장된다.
      move_to는 전체 이동을 한 번에 던지면 모터 프로파일 전속으로 돌므로,
-     20Hz로 목표를 --rotate-speed(°/s)만큼씩 밀어 팬다운 속도로 돌리고
+     20Hz로 목표를 실제 위치보다 --rotate-lead° 앞세워 연속으로 돌리고
      정지 신호(모드 전환/전원 OFF)에 한 틱 안에 반응하게 했다.
      회전은 풍속과 연동 — 유효 풍속 0(WIND 세기 0 write)이면 스윕도 정지,
      1~3이 다시 오면 재개한다 (바람 없이 헤드만 도는 동작 방지). 경계
@@ -121,41 +121,40 @@ class _DryRelay:
 
 def _make_sweeper(mc, args):
     """기본-회전 모드(0x01, 풍속 ≥1)용 러너 — pan을 원점(0°) 기준 ±span° 왕복,
-    tilt는 0° 유지 (docstring 7).
+    tilt는 0° 유지. 카메라/디텍터는 쓰지 않는다.
 
-    move_to는 '최신 목표만 유지' 논블로킹이라, 목표를 20Hz로 speed(°/s)만큼씩
-    밀면 모터 프로파일 전속이 아니라 팬다운 속도로 돌고, stop_event에도 한 틱
-    (50ms) 안에 반응한다 — 마지막 목표가 현 위치에서 한 틱 이내라 그 자리에
-    감속 정지한다. 추적하다 span 밖(예: pan 80°)에서 진입하면 한 번에 span으로
-    클램프하지 않고(전속 점프 방지) 같은 속도로 범위 안까지 걸어 들어온다.
-    카메라/디텍터는 쓰지 않는다.
+    [왜 목표를 앞세우고 반전은 실제 위치로 보는가]
+    MotorController 는 목표를 따라잡으면 감속 → 큐 배출 → 정지한다. 그래서 목표가
+    모터 순항 속도보다 느리게 전진하면 매 틱 "램프 상승 → 따라잡음 → 감속 → 정지 →
+    재기동"을 반복해 눈에 띄게 덜컹거린다 (실기 2026-09-02).
+    연속으로 돌리려면 **목표가 항상 모터보다 앞서 있어야** 한다.
 
-    ⚠ --rotate-speed 는 팬 모터의 최고 각속도보다 작아야 한다. 크면 목표만 앞서
-    달아나 모터가 계속 포화 상태가 되는데, 반전 판정(±span)이 실제 헤드 위치가
-    아니라 그 달아난 목표로 일어나 **실제 스윕 폭이 설정값보다 훨씬 좁아지고
-    좌우가 비대칭이 된다**. 2026-09-02: 기본값이 20°/s 였는데 팬 최고가
-    7.87°/s 라 ±60 을 다 돌지 못했다 → 6°/s 로 낮춤.
-    최고 각속도 = f_max × 360 / (steps_per_rev × microstep × gear_ratio).
+    그런데 목표만 앞세우면 ±span 반전 판정이 실제 헤드 위치가 아니라 달아난 목표로
+    일어나 스윕 폭이 설정값보다 좁아지고 좌우가 비대칭이 된다. 그래서 **전진은
+    lead 만큼 앞세우고, 반전은 실제 장부 위치로 판정**한다.
+
+    결과적으로 스윕 속도는 모터 순항 속도로 고정된다 — 그보다 느리게 "부드럽게"
+    돌 방법이 이 드라이버 구조에는 없다 (f_max 를 낮추지 않는 한).
+    팬 순항 = f_max × 360 / (steps_per_rev × microstep × gear_ratio) ≈ 7.9°/s.
+
+    stop_event 에는 한 틱(50ms) 안에 반응한다 — 다음 목표를 안 주면 모터가 lead
+    만큼 더 가고 그 자리에 감속 정지한다.
     """
-    span, speed, period = args.rotate_span, args.rotate_speed, 0.05
+    span, lead, period = args.rotate_span, args.rotate_lead, 0.05
 
     def _run(stop_event):
-        target = mc.current_position()[0]
-        direction = -1.0 if target > 0 else 1.0
-        print(f"[E2E] 회전 스윕 시작 — pan ±{span:g}° (0° 기준, {speed:g}°/s), tilt 0°")
+        pos = mc.current_position()[0]
+        direction = -1.0 if pos > 0 else 1.0
+        print(f"[E2E] 회전 스윕 시작 — pan ±{span:g}° (0° 기준, 모터 순항 속도), tilt 0°")
         while not stop_event.is_set():
-            # span 밖에서 시작했으면 우선 범위 쪽으로 걷는다.
-            if target > span:
+            pos = mc.current_position()[0]
+            # 반전은 실제 위치로 판정한다 (span 밖에서 진입해도 범위 쪽으로 걸어온다).
+            if pos >= span:
                 direction = -1.0
-            elif target < -span:
+            elif pos <= -span:
                 direction = 1.0
-            target += direction * speed * period
-            # 끝단 도달 시 반전 (범위 안에서 넘어선 경우에만).
-            if direction > 0 and target >= span:
-                target, direction = span, -1.0
-            elif direction < 0 and target <= -span:
-                target, direction = -span, 1.0
-            mc.move_to(target, 0.0)
+            # 목표는 항상 lead 만큼 앞 — 모터가 큐를 비우지 않아 연속으로 돈다.
+            mc.move_to(pos + direction * lead, 0.0)
             stop_event.wait(period)
 
     return _run
@@ -426,8 +425,10 @@ def main() -> None:
     # ── 기본-회전 모드 (0x01) 스윕 ───────────────────────────────────────────
     p.add_argument("--rotate-span", type=float, default=60.0,
                    help="회전 모드 pan 스윕 반각 — 0° 기준 ±° (docstring 7)")
-    p.add_argument("--rotate-speed", type=float, default=6.0,
-                   help="회전 모드 스윕 속도 (°/s)")
+    p.add_argument("--rotate-lead", type=float, default=3.0,
+                   help="회전 모드에서 목표를 실제 위치보다 앞세울 각도 (°). "
+                        "모터가 큐를 비워 정지→재기동을 반복하지 않을 만큼이면 "
+                        "된다. 스윕 속도는 모터 순항 속도로 고정된다.")
     # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
@@ -467,8 +468,8 @@ def main() -> None:
     if not 0 < args.rotate_span <= min(lim["pan"]["max"], -lim["pan"]["min"]):
         print("[ERROR] --rotate-span은 0보다 크고 pan 회전 한계 안이어야 합니다")
         sys.exit(1)
-    if args.rotate_speed <= 0:
-        print("[ERROR] --rotate-speed는 0보다 커야 합니다")
+    if args.rotate_lead <= 0:
+        print("[ERROR] --rotate-lead는 0보다 커야 합니다")
         sys.exit(1)
 
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf,

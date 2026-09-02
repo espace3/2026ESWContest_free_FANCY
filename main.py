@@ -640,8 +640,10 @@ def main() -> None:
     # ── 기본-회전 모드 (0x01) 스윕 (v2 docstring 7) ──────────────────────────
     p.add_argument("--rotate-span", type=float, default=60.0,
                    help="회전 모드 pan 스윕 반각 — 0° 기준 ±°")
-    p.add_argument("--rotate-speed", type=float, default=6.0,
-                   help="회전 모드 스윕 속도 (°/s)")
+    p.add_argument("--rotate-lead", type=float, default=3.0,
+                   help="회전 모드에서 목표를 실제 위치보다 앞세울 각도 (°). "
+                        "모터가 큐를 비워 정지→재기동을 반복하지 않을 만큼이면 "
+                        "된다. 스윕 속도는 모터 순항 속도로 고정된다.")
     # ── 부위 모드 (0x03) — docstring 5. 세부 시나리오 파라미터(수렴/탐색 등)는
     #    app/fullbody_tracking.py와 같은 기본값을 쓴다 (control/fullbody_scenario.py) ──
     p.add_argument("--body-dwell", type=float, default=2.0,
@@ -720,8 +722,8 @@ def main() -> None:
     if not 0 < args.rotate_span <= min(lim["pan"]["max"], -lim["pan"]["min"]):
         print("[ERROR] --rotate-span은 0보다 크고 pan 회전 한계 안이어야 합니다")
         sys.exit(1)
-    if args.rotate_speed <= 0:
-        print("[ERROR] --rotate-speed는 0보다 커야 합니다")
+    if args.rotate_lead <= 0:
+        print("[ERROR] --rotate-lead는 0보다 커야 합니다")
         sys.exit(1)
     if (args.body_dwell <= 0 or args.body_exit_deg <= 0 or args.body_exit_window <= 0
             or args.body_still_s <= 0 or args.body_still_deg <= 0

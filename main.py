@@ -350,7 +350,13 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     last_log = time.time()
                 if web_state:
                     vis = _draw_overlay(frame, people, target_idx, smoothed, fresh,
-                                        scenario, last_pan, last_tilt, fps)
+                                        scenario, last_pan, last_tilt, fps,
+                                        target_cx=args.target_cx,
+                                        target_cy=args.target_cy,
+                                        aim_bias_deg=scenario.aim_ratio.get(
+                                            scenario.active_region(), 0.0)
+                                        * scenario.gap_deg,
+                                        fov_v=fov_v)
                     if phase == "fallback":
                         cv2.putText(vis, "FALLBACK (tracking)", (10, 72),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 80, 255), 2)

@@ -55,17 +55,38 @@ def _axes_idle(mc) -> bool:
 # ── 시각화 ───────────────────────────────────────────────────────────────────
 
 def _draw_overlay(frame, people, target_idx, smoothed, fresh, scenario,
-                  pan_cmd: float, tilt_cmd: float, fps: float):
+                  pan_cmd: float, tilt_cmd: float, fps: float,
+                  target_cx: float = 0.5, target_cy: float = 0.5,
+                  aim_bias_deg: float = 0.0, fov_v: float = 67.0):
+    """부위 모드 화면. 조준 관련 표시가 셋이다.
+
+      시안 십자 + 파선   조준점 (target_cx/cy). 이 자리에 부위를 놓는 것이 목표다.
+      노란 짧은 선       조준 편향(aim_ratio x gap)까지 더한 최종 수렴 위치.
+                        편향이 0이면 시안 십자와 겹친다.
+      굵은 원            지금 겨누는 부위. 가는 원은 나머지 부위.
+      초록 선            그 부위에서 최종 수렴 위치까지 = 남은 오차.
+    """
     from app.camera import draw_pose   # 순환 import 회피 (run_tracking 과 같은 이유)
     vis = draw_pose(frame, people, target_idx)
     h, w = vis.shape[:2]
-    cv2.drawMarker(vis, (w // 2, h // 2), (0, 210, 230), cv2.MARKER_CROSS, 20, 1)
+    tx, ty = int(target_cx * w), int(target_cy * h)
+    # 조준점 — 시안 십자 + 전체 폭 파선
+    cv2.drawMarker(vis, (tx, ty), (0, 210, 230), cv2.MARKER_CROSS, 24, 2)
+    for x in range(0, w, 16):
+        cv2.line(vis, (x, ty), (min(x + 8, w), ty), (0, 210, 230), 1)
+    # 편향까지 더한 실제 수렴 위치 (부위가 여기 오면 멈춘다)
+    ay = int((target_cy + aim_bias_deg / fov_v) * h)
+    if abs(ay - ty) > 2:
+        cv2.line(vis, (tx - 40, ay), (tx + 40, ay), (220, 200, 0), 2)
+        cv2.putText(vis, f"aim{aim_bias_deg:+.1f}deg", (tx + 46, ay + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 200, 0), 1)
     active = scenario.active_region()
     for name, col in _REGION_COLORS.items():
         if fresh[name]:
             c = (int(smoothed[name]["cx"] * w), int(smoothed[name]["cy"] * h))
             if name == active:
                 cv2.circle(vis, c, 14, col, 3)
+                cv2.line(vis, c, (c[0], ay), (0, 200, 60), 2)   # 남은 오차
             else:
                 cv2.circle(vis, c, 6, col, 1)
     cv2.putText(vis, f"{scenario.state.upper()} region={active}", (10, 24),
@@ -268,7 +289,12 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
             tx, ty = int(args.target_cx * w), int(args.target_cy * h)
             # 조준 기준선 — 제어하는 축 방향으로만 긋는다.
             if use_pan and use_tilt:
-                cv2.drawMarker(vis, (tx, ty), (0, 210, 230), cv2.MARKER_CROSS, 22, 1)
+                cv2.drawMarker(vis, (tx, ty), (0, 210, 230), cv2.MARKER_CROSS, 24, 2)
+                # 십자만으로는 조준점이 화면 중앙에서 얼마나 벗어났는지 안 보인다.
+                for x in range(0, w, 16):
+                    cv2.line(vis, (x, ty), (min(x + 8, w), ty), (0, 210, 230), 1)
+                for y in range(0, h, 16):
+                    cv2.line(vis, (tx, y), (tx, min(y + 8, h)), (0, 210, 230), 1)
             elif use_pan:
                 cv2.line(vis, (tx, 0), (tx, h), (0, 210, 230), 1)
             else:

@@ -69,13 +69,8 @@ class FullBodyScenario:
         fov_v_deg: float,
         pan_min: float, pan_max: float,
         tilt_min: float, tilt_max: float,
-        # 아래 넷은 기본값을 두지 않는다 — 값의 출처는 config "tracking" 하나뿐이고,
-        # 여기 사본을 남기면 config를 고쳐도 조용히 옛 숫자가 쓰인다.
         gain_pan: float,
         gain_tilt: float,
-        # 조준점(정규화 화면 좌표). 0.5, 0.5 가 화면 정중앙이다. 카메라 렌즈와
-        # 송풍구가 같은 높이가 아니라, 렌즈를 정확히 맞추면 바람은 어긋난다 —
-        # target_cy 를 0.5 에서 옮겨 그 차이를 보정한다.
         target_cx: float,
         target_cy: float,
         invert_pan: bool = False,

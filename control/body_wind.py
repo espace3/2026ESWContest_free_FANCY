@@ -186,6 +186,15 @@ class BodyPatrolScenario(FullBodyScenario):
 
         도착 판정이 없어졌으므로 조준 중인 부위도 함께 갱신한다 — 사용자가
         움직이거나 거리가 변해도 재매핑 없이 조준이 따라간다.
+
+        ⚠ 이동 중에 부르면 웨이포인트가 진행 방향으로 밀린다. _tilt_of 는
+        "장부각 + 화면 오차각"으로 절대각을 만드는데, 장부는 큐잉 시점에 기록돼
+        이동 중에는 실제 로터보다 앞서 있고(_LOOKAHEAD_S 분량) 화면은 실제
+        로터가 본 것이라 기준이 다르다. 웨이포인트는 관측과 달리 **저장**되므로
+        그 편향이 다음 프레임에 스스로 교정되지 않는다.
+        그래서 순찰에서는 obs["idle"] 일 때만 부른다 (_step_patrol 참고).
+        스캔은 매핑을 끝내야 진행되므로 이동 중에도 부르고, 그때 들어간 편향은
+        순찰의 정지 구간 갱신이 걷어낸다.
         """
         for region in self.SCAN_ORDER:
             if not obs["fresh"][region]:
@@ -262,7 +271,11 @@ class BodyPatrolScenario(FullBodyScenario):
             self.events.append("웨이포인트 없음 — 매핑 재시작")
             self._restart_scan()
             return self.body_pan, cur_tilt
-        self._remap(obs, cur_tilt)
+        # 이동 중 갱신은 장부 지연만큼 웨이포인트를 밀어 "내려가다 멈추고 다시
+        # 올라가는" 진동을 만든다 (실기 2026-09-02). 정지 구간에서만 갱신한다 —
+        # 부위마다 dwell_s 씩 머무르므로 기회는 충분하다.
+        if obs["idle"]:
+            self._remap(obs, cur_tilt)
 
         region = route[self._patrol_i % len(route)]
         if self._slot_until is None:

@@ -324,14 +324,19 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 # 쓴다. 순찰이 시간 슬롯이라 도착 판정이 없어져, 데드존이
                 # 남기는 정지 오차가 진행을 막지 않는다. 다만 재조준·탐색은
                 # 부모가 여전히 수렴으로 판정하므로 그때만 좁힌다.
-                # 순찰도 수렴 구간이다 — 조준이 연속 피드백(현재각 + gain x 오차)
-                # 이라 넓은 데드존은 오차 < 데드존/gain 에서 명령을 통째로 막아
-                # 그만큼 못 미친 채 세운다 (1.0/0.2 = 5°). 좁히면 1.25°.
-                converging = scenario.state in ("patrol", "recenter", "search")
+                converging = scenario.state in ("recenter", "search")
+                # 팬은 순찰 중에도 넓은 데드존을 그대로 쓴다 — 가슴 cx 추종이라
+                # 데드존이 곧 잡음 억제다. 좁히면 틸트만 움직이면 되는 상황에서도
+                # cx 미세 변화에 팬이 따라 움직인다 (실기 2026-09-02).
                 pan_g = apply_deadzone(pan_t, last_pan,
                                        conv_dz_pan if converging else args.body_deadzone_pan)
-                tilt_g = apply_deadzone(tilt_t, last_tilt,
-                                        conv_dz_tilt if converging else args.body_deadzone_tilt)
+                # 틸트는 순찰도 좁힌다 — 조준이 연속 피드백(현재각 + gain x 오차)
+                # 이라 넓은 데드존은 오차 < 데드존/gain 에서 명령을 통째로 막아
+                # 그만큼 못 미친 채 세운다 (1.0/0.2 = 5°). 좁히면 1.25°.
+                tilt_g = apply_deadzone(
+                    tilt_t, last_tilt,
+                    conv_dz_tilt if (converging or scenario.state == "patrol")
+                    else args.body_deadzone_tilt)
                 if not stop_event.is_set() and (pan_g, tilt_g) != (last_pan, last_tilt):
                     mc.move_to(pan_g, tilt_g)
                     last_pan, last_tilt = pan_g, tilt_g

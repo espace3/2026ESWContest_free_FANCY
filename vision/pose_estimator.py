@@ -203,14 +203,13 @@ class MoveNetMultiPoseDetector:
         }
 
     def _upper_center(self, kps: list) -> dict:
-        """상체 조준점. 엉덩이가 둘 다 보이면 기존대로 어깨+엉덩이 4점 평균이고,
-        엉덩이가 안 보이면 어깨 중점에서 **머리 반대 방향으로** 연장해 내린다.
+        """상체 조준점 = 어깨 중점에서 **머리 반대 방향으로** 연장한 자리.
 
-        [왜] _region_center는 보이는 점만 평균하므로, 엉덩이가 가려지면(앉은 자세,
-        책상) 중심이 어깨선 = 목/쇄골로 올라붙는다. 게다가 부위 모드의 조준 보정
-        (main.py --body-upper-ratio)은 "중심이 배꼽 근처"라는 전제로 조준을 더
-        위로 올리기 때문에, 두 오차가 같은 방향으로 겹쳐 목·얼굴을 겨눈다.
-        엉덩이가 깜빡이면 조준점이 어깨선↔몸통중앙을 프레임마다 오간다.
+        [왜 어깨+엉덩이 평균을 안 쓰나] 그 평균은 배꼽 근처라 가슴보다 한참
+        아래여서 바람이 제대로 안 간다 (실기 2026-09-02). 게다가 엉덩이가
+        가려지면(앉은 자세, 책상) _region_center 가 보이는 점만 평균해 중심이
+        어깨선 = 목/쇄골로 올라붙고, 엉덩이가 깜빡이면 조준점이 두 자리를
+        프레임마다 오간다. 어깨와 머리만 쓰면 자세·가려짐과 무관하게 같은 곳이다.
 
         [단위] 오프셋을 정규화 좌표의 고정값으로 두면 안 된다 — 화면 속 사람
         크기는 거리에 반비례해서(1m에서 어깨폭 0.162, 3m에서 0.054) 같은 값이
@@ -221,13 +220,10 @@ class MoveNetMultiPoseDetector:
         [한계] 고개를 숙이면 이 벡터가 짧아져 오프셋도 줄어든다 — 30° 숙임에서
         약 7cm 위로 뜬다. 바람 조준 정밀도에서는 무시할 수준이라 감수한다.
         """
-        hips = [i for i in (11, 12) if kps[i]["conf"] >= self._conf_thr]
-        if len(hips) == 2:
-            return self._region_center(kps, UPPER_IDX)
-
         sh = self._region_center(kps, [5, 6])
         if not sh["visible"]:
-            return self._region_center(kps, UPPER_IDX)   # 엉덩이만 보이는 드문 경우
+            # 어깨가 없으면 방향을 정할 수 없다 — 남은 점(엉덩이)들의 평균으로.
+            return self._region_center(kps, UPPER_IDX)
 
         head = self._region_center(kps, HEAD_IDX)
         if head["visible"]:

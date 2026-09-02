@@ -212,8 +212,6 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             target_cx=args.target_cx, target_cy=args.target_cy,
             dwell_s=args.body_dwell,
             converge_deg=args.body_converge,
-            # 스캔은 한 프레임 직접 매핑으로 대체됐다 — 부모의 반복 수렴
-            # 인자(converge_frames/occl_frames/blind_deg)는 쓰이지 않는다.
             map_timeout_s=args.body_map_timeout,
             # 시나리오 자체 이동 감지(recenter)는 게이트보다 둔하게 — 게이트가
             # 1차 판정자다 (docstring 5의 "이동 감지 우선순위" 참고).
@@ -665,7 +663,7 @@ def main() -> None:
                         "모터가 큐를 비워 정지→재기동을 반복하지 않을 만큼이면 "
                         "된다. 스윕 속도는 모터 순항 속도로 고정된다.")
     # ── 부위 모드 (0x03) — docstring 5. 세부 시나리오 파라미터(수렴/탐색 등)는
-    #    control/fullbody_scenario.py 의 기본값을 그대로 쓴다 ──
+    #    control/body_wind.py 의 기본값을 그대로 쓴다 ──
     p.add_argument("--body-dwell", type=float, default=2.0,
                    help="부위 순찰 체류 시간 (s)")
     p.add_argument("--body-exit-deg", type=float, default=12.0,

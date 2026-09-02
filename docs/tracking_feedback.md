@@ -1,6 +1,6 @@
 # 추적 피드백 원리 — 왜 각도를 "더하는가"
 
-`app/tracking.py`, `control/fullbody_scenario.py`, `main.py`의 추적 루프가 공통으로
+`app/tracking.py`, `control/body_wind.py`, `main.py`의 추적 루프가 공통으로
 따르는 제어 원리. 코드를 읽기 전에 이 문서를 먼저 보면 "왜 절대 각도를 계산하지 않고
 현재 각도에 더하는가"가 풀린다.
 
@@ -59,5 +59,5 @@
 |---|---|
 | `control/control_signal_generator.py` | `compute_pan_angle` / `compute_tilt_angle` / `clamp_angle` / `apply_deadzone` |
 | `app/tracking.py` | 닫힌 루프 본문 `run_tracking(axis=...)` — pan / tilt / pantilt 공용 |
-| `control/fullbody_scenario.py` | 위 원리를 전신 순찰 상태기계로 확장 |
+| `control/body_wind.py` | 위 원리를 전신 순찰 상태기계로 확장 |
 | `config.py` `"fov"` / `"limits"` | 환산 상수와 소프트 리밋 |

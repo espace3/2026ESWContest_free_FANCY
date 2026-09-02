@@ -141,10 +141,10 @@ vision/                   순수 계산 — GPIO/BlueZ import 금지, 프레임/
 
 control/                  순수 계산 — GPIO/BlueZ import 금지
   control_signal_generator.py  좌표 → 팬/틸트 각도, 데드존, 소프트 리밋
-  fullbody_scenario.py         전신(머리→발) 시나리오 상태기계:
-                               스캔 → 웨이포인트 순찰 → 이동 재획득, 가림·틸트 리밋 처리
-  body_wind.py                 부위 모드 보조: 순찰 경로 필터(세기 0인 부위 제외),
-                               풍속 중재, 이동 감지 게이트, 부위별 조준각 벌리기
+  body_wind.py                 부위 모드 전체: 전신 시나리오 상태기계(한 프레임 매핑 →
+                               시간 슬롯 순찰 → 재조준·탐색, 가림·틸트 리밋 처리),
+                               순찰 경로 필터(세기 0인 부위 제외), 풍속 중재,
+                               이동 감지 게이트, 부위별 조준각 벌리기
   recognition_reporter.py      객체 인식 notify를 언제 보낼지 판정 — 시간 창 안의
                                검출 비율로 경계 상황의 깜빡임을 흡수
 

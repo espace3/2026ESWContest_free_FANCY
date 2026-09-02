@@ -129,6 +129,13 @@ def _make_sweeper(mc, args):
     감속 정지한다. 추적하다 span 밖(예: pan 80°)에서 진입하면 한 번에 span으로
     클램프하지 않고(전속 점프 방지) 같은 속도로 범위 안까지 걸어 들어온다.
     카메라/디텍터는 쓰지 않는다.
+
+    ⚠ --rotate-speed 는 팬 모터의 최고 각속도보다 작아야 한다. 크면 목표만 앞서
+    달아나 모터가 계속 포화 상태가 되는데, 반전 판정(±span)이 실제 헤드 위치가
+    아니라 그 달아난 목표로 일어나 **실제 스윕 폭이 설정값보다 훨씬 좁아지고
+    좌우가 비대칭이 된다**. 2026-09-02: 기본값이 20°/s 였는데 팬 최고가
+    7.87°/s 라 ±60 을 다 돌지 못했다 → 6°/s 로 낮춤.
+    최고 각속도 = f_max × 360 / (steps_per_rev × microstep × gear_ratio).
     """
     span, speed, period = args.rotate_span, args.rotate_speed, 0.05
 
@@ -419,7 +426,7 @@ def main() -> None:
     # ── 기본-회전 모드 (0x01) 스윕 ───────────────────────────────────────────
     p.add_argument("--rotate-span", type=float, default=60.0,
                    help="회전 모드 pan 스윕 반각 — 0° 기준 ±° (docstring 7)")
-    p.add_argument("--rotate-speed", type=float, default=20.0,
+    p.add_argument("--rotate-speed", type=float, default=6.0,
                    help="회전 모드 스윕 속도 (°/s)")
     # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")

@@ -640,7 +640,7 @@ def main() -> None:
     # ── 기본-회전 모드 (0x01) 스윕 (v2 docstring 7) ──────────────────────────
     p.add_argument("--rotate-span", type=float, default=60.0,
                    help="회전 모드 pan 스윕 반각 — 0° 기준 ±°")
-    p.add_argument("--rotate-speed", type=float, default=20.0,
+    p.add_argument("--rotate-speed", type=float, default=6.0,
                    help="회전 모드 스윕 속도 (°/s)")
     # ── 부위 모드 (0x03) — docstring 5. 세부 시나리오 파라미터(수렴/탐색 등)는
     #    app/fullbody_tracking.py와 같은 기본값을 쓴다 (control/fullbody_scenario.py) ──

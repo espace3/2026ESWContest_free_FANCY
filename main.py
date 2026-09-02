@@ -8,7 +8,7 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
   main()            CLI 인자 → 모터·릴레이·카메라·러너·supervisor 조립
 
 모드마다 도는 러너와 그 교대는 app/runners.py, 카메라·시각화는 app/camera.py,
-추적 루프는 app/tracking.py, 부위 시나리오는 control/body_wind.py 에 있다.
+추적 루프는 app/tracking.py, 부위 시나리오는 control/region_patrol.py 에 있다.
 
 설계 근거 (전부 실기 검증에서 나온 것이다):
 
@@ -28,12 +28,12 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
        지점이 거기라서.
   3. 풍량 세기 0(정지)은 공용·부위 어느 대상에도 허용한다. 부위 세 개가 모두
      0이어도 유효한 설정이며(사용자가 바람만 끈 상태), 그때 부위 러너는 조준을
-     계속하되 릴레이를 돌리지 않는다 — control/body_wind.py _route 참고.
+     계속하되 릴레이를 돌리지 않는다 — control/region_patrol.py _route 참고.
   4. 유효 모드(_effective_mode) — 요청 모드(앱이 write한 값)와 별개로 RPi가
      실제로 돌리는 모드. 부위 러너의 추적 폴백 중에만 갈라진다(아래 5).
   5. 부위 모드(0x03) — 단일 세션 러너(app/runners.py _make_body_runner)가
      내부 2상으로 돈다.
-       순찰(patrol): BodyPatrolScenario(control/body_wind.py)가 head→upper→
+       순찰(patrol): RegionPatrolScenario(control/region_patrol.py)가 head→upper→
          lower 순회(세기 0 부위 제외). 부위 각도는 반복 수렴 스캔이 아니라
          **한 프레임 직접 매핑**으로 잡고 곧바로 순찰에 들어간다(수직 FOV 67°
          광각이라 전신이 한 프레임에 담긴다 — 근거는 그쪽 클래스 docstring).
@@ -41,7 +41,7 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
          동안(매핑·탐색·재조준)은 공용 세기 — 아래 폴백과 같은 규칙.
        추적 폴백(fallback): 순찰 안정 상태에서 최근 --body-exit-window 동안
          팬 이동량 > --body-exit-deg면 전환 (팬은 사용자를 따라갈 때만 움직여
-         헤드 자체 스윙에 면역 — control/body_wind.py MotionGate 참고).
+         헤드 자체 스윙에 면역 — control/region_patrol.py MotionGate 참고).
          가슴 중심 조준(타겟 모드와 같은 피드백)에 **공용 세기** 적용
          (유효 모드가 추적이므로 풍속도 추적 모드와 동일 — 리모컨 주체 일관).
          팬 각이 --body-still-s 동안 잠잠하면 순찰 재개.
@@ -55,7 +55,7 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
          **측정된 머리↔상체 간격의 배수**로 준다 (--body-head-ratio 등).
        순찰은 도착 판정 없이 **시간 슬롯**으로 돈다 — 슬롯 = 체류 시간 +
          이동 시간(추정). 도착 판정을 쓰면 잡음 억제용 데드존이 남기는
-         정지 오차 때문에 그 부위에 갇힌다 (control/body_wind.py 참고).
+         정지 오차 때문에 그 부위에 갇힌다 (control/region_patrol.py 참고).
      러너 교체가 아니라 내부 상 전환이라 카메라 세션이 안 끊기고, 전환마다
      유효 모드 push [0x03, 모드]가 나간다. 폴백 중 가슴을 잃으면 마지막 조준을
      유지한다(재탐색 스윕은 순찰 상의 search 몫 — 알려진 한계).
@@ -376,7 +376,7 @@ def main() -> None:
                         "모터가 큐를 비워 정지→재기동을 반복하지 않을 만큼이면 "
                         "된다. 스윕 속도는 모터 순항 속도로 고정된다.")
     # ── 부위 모드 (0x03) — docstring 5. 세부 시나리오 파라미터(수렴/탐색 등)는
-    #    control/body_wind.py 의 기본값을 그대로 쓴다 ──
+    #    control/region_patrol.py 의 기본값을 그대로 쓴다 ──
     p.add_argument("--body-dwell", type=float, default=2.0,
                    help="부위 순찰 체류 시간 (s)")
     p.add_argument("--body-exit-deg", type=float, default=12.0,
@@ -510,7 +510,7 @@ def main() -> None:
                 fan_cm = _DryRelay()
             else:
                 # lgpio를 최상단에서 import하는 모듈이라 지연 import — --dry-run 개발 PC 대응
-                from hardware.relay_control import FanRelay
+                from hardware.relay import FanRelay
                 fan_cm = FanRelay(CFG, handle=mc.h)  # gpiochip 핸들 공유 (mc보다 먼저 닫혀야 함)
 
             with fan_cm as fan:  # mc보다 먼저 닫힘 — 공유 핸들이 살아있을 때 전부 오픈

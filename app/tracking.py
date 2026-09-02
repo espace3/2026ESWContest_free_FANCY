@@ -179,7 +179,7 @@ def _open_motor(dry_run: bool, state_path=None, *, timing: bool = False,
     if dry_run:
         print("[motor] DRY-RUN — 실제 모터를 구동하지 않습니다 (각도 계산만).")
         return _DryMotor()
-    from hardware.motor_control import MotorController
+    from hardware.stepper import MotorController
     return MotorController(CFG, state_path=state_path, timing=timing,
                            pin_pulse_core=pin_pulse_core, rt=rt)
 

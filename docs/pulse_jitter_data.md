@@ -34,7 +34,7 @@
 4. **커널 타이머 슬랙은 무관하다.** 1ns로 낮춰도 부하 6개 결과가 그대로다
    (p99 33.8 → 32.4us, 오차 범위). 배제된 가설 — `lgpio_patch.md` 참고.
 
-→ 채택: `hardware/motor_control.py`의 `open_chip()`이 전용 코어 + SCHED_FIFO(10) 상태에서
+→ 채택: `hardware/stepper.py`의 `open_chip()`이 전용 코어 + SCHED_FIFO(10) 상태에서
 `gpiochip_open()`을 호출하고 직후 호출 스레드를 원복한다. RT와 코어 격리가 lgpio 펄스
 스레드에만 상속으로 남는다. **f_max 상향은 (b) 몰림이 0이 되기 전에는 금물.**
 

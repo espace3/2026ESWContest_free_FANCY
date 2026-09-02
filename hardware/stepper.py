@@ -1,5 +1,5 @@
 """
-hardware/motor_control.py
+hardware/stepper.py
 
 팬틸트 스테퍼 모터 구동 — 하드웨어 호출 전용 모듈.
 control/control_signal.py가 계산한 각도(degree)를 받아 실제로

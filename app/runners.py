@@ -38,7 +38,7 @@ from dbus_fast.constants import MessageType
 from dbus_fast.message import Message
 
 from config import CFG, TARGET_MODES
-from control.body_wind import BodyPatrolScenario, MotionGate, body_wind_level
+from control.region_patrol import RegionPatrolScenario, MotionGate, region_wind_level
 from control.control_signal import (apply_deadzone, clamp_angle,
                                               compute_pan_angle,
                                               compute_tilt_angle)
@@ -86,7 +86,7 @@ class _ReportingDetector:
 def fan_level_txt(levels, scenario, phase, common_level) -> str:
     """상태 로그용 — 지금 릴레이에 적용 중인 세기 표기."""
     lv = (common_level if phase == "fallback"
-          else body_wind_level(scenario, levels, common_level))
+          else region_wind_level(scenario, levels, common_level))
     return f"{lv}단" if lv else "정지"
 
 
@@ -182,7 +182,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
     """부위 모드(0x03) 러너 — 내부 2상(순찰↔추적 폴백) 단일 세션 (docstring 5).
 
     전신 추적 루프를 세션형(stop_event)으로 옮기고 풍속 중재
-    (body_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
+    (region_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
     시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자 위치·거리가
     달라졌을 수 있어서인데, 직접 매핑이라 다시 잡는 비용이 한 프레임이다.
     gains=(pan, tilt)는 main에서 미리 캡처한 값을 그대로 받는다.
@@ -204,7 +204,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
 
     def _run(stop_event):
         cam, backend = _open_cam_retry(args)
-        scenario = BodyPatrolScenario(
+        scenario = RegionPatrolScenario(
             fov_h, fov_v, args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
             gain_pan=gain_pan, gain_tilt=gain_tilt,
             invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
@@ -294,7 +294,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     })
                     for ev in scenario.events:
                         print(f"\n[E2E] {ev}")
-                    fan.set_speed(body_wind_level(scenario, levels,
+                    fan.set_speed(region_wind_level(scenario, levels,
                                                   service.common_level))
                     if gate.update_patrol(t0, cur_pan, scenario.state == "patrol"):
                         phase = "fallback"

@@ -141,7 +141,7 @@ vision/                   순수 계산 — GPIO/BlueZ import 금지, 프레임/
 
 control/                  순수 계산 — GPIO/BlueZ import 금지
   control_signal.py  좌표 → 팬/틸트 각도, 데드존, 소프트 리밋
-  body_wind.py                 부위 모드 전체: 전신 시나리오 상태기계(한 프레임 매핑 →
+  region_patrol.py                 부위 모드 전체: 전신 시나리오 상태기계(한 프레임 매핑 →
                                시간 슬롯 순찰 → 재조준·탐색, 가림·틸트 리밋 처리),
                                순찰 경로 필터(세기 0인 부위 제외), 풍속 중재,
                                이동 감지 게이트, 부위별 조준각 벌리기
@@ -149,9 +149,9 @@ control/                  순수 계산 — GPIO/BlueZ import 금지
                                검출 비율로 경계 상황의 깜빡임을 흡수
 
 hardware/                 하드웨어 호출 전용 — 계산 결과를 GPIO로 내보내기만 함
-  motor_control.py       팬틸트 스테퍼 구동. 논블로킹(축별 워커 스레드, 최신 목표 선점),
+  stepper.py       팬틸트 스테퍼 구동. 논블로킹(축별 워커 스레드, 최신 목표 선점),
                             위치 저장/복원, lgpio 펄스 스레드 RT 승격 대책 포함
-  relay_control.py       선풍기 풍속 릴레이(TS0011) 구동. 논블로킹,
+  relay.py       선풍기 풍속 릴레이(TS0011) 구동. 논블로킹,
                             break-before-make(전부 오픈 → guard → 하나만 닫기)
   position_store.py         장부 위치(스텝)를 파일에 저장/복원 — 파일 I/O 전용
   tools/patch_lgpio.sh      liblgpio EINVAL 무한 스핀 패치 (Pi에서 1회 실행 —
@@ -241,7 +241,7 @@ tools/                  실측·캘리브레이션 도구 — 운용에는 안 �
 - **하드웨어 호출 전용 모듈** — 계산 모듈이 만든 값을 받아 GPIO/UART/BLE로 내보내기만
   하고, 계산을 하지 않습니다. `hardware/` 전체가 여기 해당합니다.
 - 예: `compute_pan_angle(cx_norm, fov_h_deg) -> float`은 순수 함수이고,
-  실제 GPIO 호출은 `motor_control.move_to(angle)`이 전담합니다.
+  실제 GPIO 호출은 `stepper.move_to(angle)`이 전담합니다.
 
 이렇게 분리하면 **모터 드라이버를 교체하거나 계산 버그를 찾을 때 서로 영향 없이**
 수정·검증할 수 있습니다. 실제로 이 구조 덕분에 이미 검증을 마친 추적 루프

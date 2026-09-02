@@ -1,12 +1,12 @@
 """
-control/body_wind.py
+control/region_patrol.py
 
 부위 인식 모드(0x03)의 순수 계산 모듈 — GPIO/BlueZ/카메라를 import하지 않는다.
 입력은 프레임별 관측 dict(장부 각도·부위 좌표), 출력은 팬/틸트 목표 각도(degree).
-실제 모터 구동은 hardware/motor_control.py 몫이다. main.py의 부위 러너가 쓴다.
+실제 모터 구동은 hardware/stepper.py 몫이다. main.py의 부위 러너가 쓴다.
 
-  - BodyPatrolScenario: 전신 추적 상태기계 (매핑 → 순찰, 이탈 시 재조준·탐색)
-  - body_wind_level:    풍속 중재 — 지금 겨누는 부위의 저장 세기
+  - RegionPatrolScenario: 전신 추적 상태기계 (매핑 → 순찰, 이탈 시 재조준·탐색)
+  - region_wind_level:    풍속 중재 — 지금 겨누는 부위의 저장 세기
   - MotionGate:         순찰 ↔ 추적 폴백 전환 판정
 
 전제: 카메라가 팬·틸트 헤드에 함께 실려 움직인다 (2026-07-10 확정). 그래서 틸트도
@@ -15,7 +15,7 @@ control/body_wind.py
 (docs/tracking_feedback.md 참고).
 
 이력: 원래 FullBodyScenario(control/fullbody_scenario.py) + 그것을 상속한
-BodyPatrolScenario 두 클래스였다. 구체 클래스가 하나뿐이라 상속이 다형성을 주지
+RegionPatrolScenario 두 클래스였다. 구체 클래스가 하나뿐이라 상속이 다형성을 주지
 못했고, 부모의 반복 수렴 스캔·도착 판정 순찰(91줄)은 자식이 완전히 대체해 한 번도
 실행되지 않았다. 어느 쪽이 도는지 매번 확인해야 하는 비용만 남아 한 클래스로 합쳤다
 (2026-09-02). 삭제된 경로는 git 이력에 있다 — `git show 5adb773:control/fullbody_scenario.py`.
@@ -29,7 +29,7 @@ from control.control_signal import (clamp_angle, compute_pan_angle,
                                               compute_tilt_angle)
 
 
-class BodyPatrolScenario:
+class RegionPatrolScenario:
     """관측 dict → (팬, 틸트) 목표각. 관측 형식:
 
     {
@@ -579,7 +579,7 @@ class BodyPatrolScenario:
         return pan_t, self._search_tilt
 
 
-def body_wind_level(scenario: BodyPatrolScenario, levels: dict[str, int],
+def region_wind_level(scenario: RegionPatrolScenario, levels: dict[str, int],
                     common_level: int = 0) -> int:
     """지금 겨누는 부위의 세기, 겨누는 부위가 없으면 common_level.
 

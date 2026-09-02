@@ -60,15 +60,32 @@
 
 ## 개발 환경
 
-- **보드**: Raspberry Pi 5 + Pi Camera Module 3
-- **OS / 언어**: Raspberry Pi OS Lite 64-bit, Python 3.11.15
-- **추론**: TFLite Runtime + MoveNet MultiPose Lightning
-  (17 COCO keypoints, 최대 6인 동시 검출). 기본 입력 256×256이지만 FPS 확보를 위해
-  **160×160**으로 낮춰 운용합니다 (`vision/pose_estimate.py`의 `INPUT_SIZE`)
-- **영상**: OpenCV 4.x
-- **BLE**: BlueZ 5.x GATT 서버 (`bluez_peripheral` / dbus_fast), Pi = Peripheral
-- **GPIO**: lgpio — Pi 5는 pigpio(DMA 하드웨어 타이밍)를 쓸 수 없습니다
-- **앱**: Flutter (Dart), Android 우선
+### 하드웨어
+
+| 구분 | 사용 부품 |
+|---|---|
+| 보드 | Raspberry Pi 5 |
+| 카메라 | Pi Camera Module 3 **Wide NoIR** (IMX708, 화각 102° × 67°) |
+| 모터 | 스테퍼 2축 (1.8°/step, 200 step/rev) — 팬: 유성기어 1:100, 틸트: 웜기어 1:92.6 |
+| 드라이버 | TMC2209 ×2 + 아두이노 CNC v3 쉴드 (마이크로스텝 1/16) |
+| 릴레이 | TS0011 4채널 중 3채널 — 기존 선풍기의 220V 풍속 탭을 단속 |
+| 전원 | 24V 5A SMPS (모터부) |
+| 그 외 | 기존 선풍기 본체, 팬틸트 기구부 |
+
+> 틸트는 웜기어라 전원이 꺼져도 헤드가 자중으로 처지지 않습니다(백드라이브 방지).
+> 팬은 회전량이 커서 유성기어를 씁니다.
+
+### 소프트웨어
+
+| 구분 | 사용 기술 |
+|---|---|
+| OS | Raspberry Pi OS Lite 64-bit (Debian trixie) |
+| 언어 | Python 3.11.15 |
+| 추론 | TFLite Runtime + MoveNet MultiPose Lightning (17 COCO keypoints, 최대 6인) |
+| 영상 | OpenCV 4.x, rpicam-apps (`rpicam-vid`) |
+| BLE | BlueZ 5.x GATT 서버 — `bluez_peripheral`(pre-release) / `dbus_fast` |
+| GPIO | `lgpio` |
+| 앱 | Flutter (Dart), Android |
 
 ---
 

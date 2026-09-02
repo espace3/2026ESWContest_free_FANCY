@@ -231,7 +231,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         last_pan, last_tilt = mc.current_position()
         recognition = RecognitionReporter()   # 인식 Status 보고 시점 (깜빡임 억제)
         fps_hist: list[float] = []
-        resp = LatencyStat("응답(캡처→모터 명령)")
+        resp = LatencyStat("영상 처리 지연(프레임→모터 명령)")
         t_prev = time.time()
         last_log = 0.0
         print(f"[E2E] 부위 순찰 세션 시작 (매핑 + 시간 슬롯) — 조준 배수 "

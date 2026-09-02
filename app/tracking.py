@@ -265,7 +265,7 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
     last_pan = last_tilt = 0.0
     lost = True
     fps_hist: list[float] = []
-    resp = LatencyStat("응답(캡처→모터 명령)")
+    resp = LatencyStat("영상 처리 지연(프레임→모터 명령)")
     t_prev = time.time()
     last_log = time.time()
 

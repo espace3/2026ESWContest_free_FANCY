@@ -261,6 +261,10 @@ def main() -> None:
     p.add_argument("--gain-tilt", type=float, default=_TRK["gain"]["tilt"], help="틸트 비례 게인")
     p.add_argument("--deadzone-pan", type=float, default=_TRK["deadzone"]["pan"], help="팬 데드존 (°)")
     p.add_argument("--deadzone-tilt", type=float, default=_TRK["deadzone"]["tilt"], help="틸트 데드존 (°)")
+    p.add_argument("--target-cx", type=float, default=_TRK["target"]["cx"],
+                   help="조준점 x (0.5=화면 중앙)")
+    p.add_argument("--target-cy", type=float, default=_TRK["target"]["cy"],
+                   help="조준점 y (0.5=화면 중앙. 렌즈↔송풍구 높이차 보정용)")
     p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
     p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
     p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"],
@@ -322,6 +326,7 @@ def main() -> None:
         args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
         gain=args.gain_pan, gain_tilt=args.gain_tilt,
         invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
+        target_cx=args.target_cx, target_cy=args.target_cy,
         converge_deg=args.converge, converge_frames=args.converge_frames,
         dwell_s=args.dwell, trim_alpha=args.trim_alpha,
         move_thr_deg=args.move_thr, rescan_thr_deg=args.rescan_thr,

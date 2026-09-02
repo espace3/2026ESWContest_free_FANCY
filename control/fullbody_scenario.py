@@ -73,6 +73,11 @@ class FullBodyScenario:
         gain_tilt: float = 0.25,
         invert_pan: bool = False,
         invert_tilt: bool = False,
+        # 조준점(정규화 화면 좌표). 0.5, 0.5 가 화면 정중앙이다. 카메라 렌즈와
+        # 송풍구가 같은 높이가 아니라, 렌즈를 정확히 맞추면 바람은 어긋난다 —
+        # target_cy 를 0.5 에서 옮겨 그 차이를 보정한다.
+        target_cx: float = 0.5,
+        target_cy: float = 0.5,
         converge_deg: float = 1.5,
         converge_frames: int = 4,
         dwell_s: float = 2.0,
@@ -93,6 +98,7 @@ class FullBodyScenario:
         self.gain, self.gain_tilt = gain, gain_tilt
         self.sign_pan = -1.0 if invert_pan else 1.0
         self.sign_tilt = -1.0 if invert_tilt else 1.0
+        self.target_cx, self.target_cy = target_cx, target_cy
         self.converge_deg = converge_deg
         self.converge_frames = converge_frames
         self.dwell_s = dwell_s
@@ -129,10 +135,10 @@ class FullBodyScenario:
     # ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     def _pan_err(self, cx: float) -> float:
-        return self.sign_pan * compute_pan_angle(cx, self.fov_h)
+        return self.sign_pan * compute_pan_angle(cx - (self.target_cx - 0.5), self.fov_h)
 
     def _tilt_err(self, cy: float) -> float:
-        return self.sign_tilt * compute_tilt_angle(cy, self.fov_v)
+        return self.sign_tilt * compute_tilt_angle(cy - (self.target_cy - 0.5), self.fov_v)
 
     def _cp(self, deg: float) -> float:
         return clamp_angle(deg, self.pan_min, self.pan_max)

@@ -68,9 +68,6 @@ class MoveNetMultiPoseDetector:
         min_person_score: float,  # 인물 판별 threshold
         num_threads: int,         # TFLite 워커 스레드 수
     ) -> None:
-        # 기본값을 두지 않는다 — 값의 출처는 config "tracking" 하나뿐이고,
-        # 여기 사본을 남기면 config를 고쳐도 조용히 옛 숫자가 쓰일 수 있다.
-        # 안 넘기면 TypeError로 즉시 드러난다.
         try:
             from tflite_runtime.interpreter import Interpreter
         except ImportError:

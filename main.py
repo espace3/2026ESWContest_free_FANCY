@@ -208,6 +208,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             fov_h, fov_v, args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
             gain=gain_pan, gain_tilt=gain_tilt,
             invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
+            target_cx=args.target_cx, target_cy=args.target_cy,
             dwell_s=args.body_dwell,
             converge_deg=args.body_converge,
             # 스캔은 한 프레임 직접 매핑으로 대체됐다 — 부모의 반복 수렴
@@ -278,7 +279,10 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 levels = _region_levels()
                 scenario.allowed = {r for r, lv in levels.items() if lv > 0}
                 scenario.levels = levels   # 세기 0인 부위는 체류 없이 지나간다
-                chest_err = (sign_pan * compute_pan_angle(chest["cx"], fov_h)
+                # 조준점은 화면 중앙이 아니라 --target-cx/cy 다. 카메라 렌즈와
+                # 송풍구가 같은 높이가 아니라 렌즈를 정확히 맞추면 바람은 어긋난다
+                # — cy 를 0.5 에서 옮겨 그 차이를 보정한다.
+                chest_err = (sign_pan * compute_pan_angle(chest["cx"] - (args.target_cx - 0.5), fov_h)
                              if chest["visible"] else 0.0)
 
                 # ── 상별 목표각 + 풍속 중재 + 전환 판정 (docstring 5) ─────────
@@ -299,7 +303,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                         print("\n[E2E] 이동 감지 → 추적 폴백 (정지하면 순찰 재개)")
                 else:
                     if chest["visible"]:
-                        et = sign_tilt * compute_tilt_angle(chest["cy"], fov_v)
+                        et = sign_tilt * compute_tilt_angle(chest["cy"] - (args.target_cy - 0.5), fov_v)
                         pan_t = clamp_angle(cur_pan + gain_pan * chest_err,
                                             args.pan_min, args.pan_max)
                         tilt_t = clamp_angle(cur_tilt + gain_tilt * et,

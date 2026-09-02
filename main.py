@@ -3,38 +3,36 @@
 """
 main.py - 진입점: BLE GATT 서비스 + 전체 조립
 
-  EswFanServiceV3   앱의 write 를 받는 GATT 서비스 (전원/모드/풍량/STATUS)
-  _ble_main_v3      BLE 부팅 — 페어링 에이전트, 서비스 등록, Advertising
+  EswFanService  앱의 write 를 받는 GATT 서비스 (전원/모드/풍량/STATUS)
+  _ble_main      BLE 부팅 — 페어링 에이전트, 서비스 등록, Advertising
   main()            CLI 인자 → 모터·릴레이·카메라·러너·supervisor 조립
 
 모드마다 도는 러너와 그 교대는 app/runners.py, 카메라·시각화는 app/camera.py,
 추적 루프는 app/tracking.py, 부위 시나리오는 control/body_wind.py 에 있다.
 
-아래 설계 근거는 이 파일이 verify_E2E_v3.py 이던 시절 v2 와의 차이로 적힌
-것이다. v1/v2 는 각자의 진입점을 제거하고 라이브러리로 흡수했으므로(2026-09-02)
-"v2 는 이랬다"는 지금 git 이력에서만 확인할 수 있다:
+설계 근거 (전부 실기 검증에서 나온 것이다):
 
-  1. 리모컨(앱) = 설정의 주체 — v2의 모드별 풍량 preset(_basic/_target_level)과
-     "모드 전환 시 저장 세기 재적용"(v2 docstring 2)을 폐기한다. 세기는 오직
-     풍량 write로만 바뀌고, 모드/전원 전환은 게이팅(전원 OFF·부위 모드 → 0)만
-     한다. 모드 전환 직후의 세기는 앱이 화면 표시값을 재전송해 맞춘다
-     (계약 — ble_protocol.md §3.3). 앱 미갱신 과도기에는 전환 시 직전 세기가
-     유지된다 (v2처럼 저장값으로 "자동으로 바뀌는" 현상 제거).
-  2. STATUS(0x0005) 실구현 — read | notify (ble_protocol.md §3.4).
+  1. 리모컨(앱) = 설정의 주체 — 세기는 오직 풍량 write로만 바뀐다. 모드/전원
+     전환은 게이팅(전원 OFF·부위 모드 → 0)만 하고, 저장해둔 세기를 되살리지
+     않는다. 모드 전환 직후의 세기는 앱이 화면 표시값을 재전송해 맞춘다
+     (계약 — docs/ble_protocol.md §3.3). RPi가 모드별 세기를 기억했다 자동
+     재적용하던 방식은 앱 화면과 실제 동작이 어긋나는 원인이라 폐기했다.
+     앱 미갱신 과도기에는 전환 시 직전 세기가 그대로 유지된다.
+  2. STATUS(0x0005) — read | notify (docs/ble_protocol.md §3.4).
      read: 0x04 스냅샷 [전원, 요청 모드, 유효 모드, 공용 세기, 머리, 상체, 하체]
        — 앱이 재전송 직후 표시값과 대조하는 불일치 검증용 (주체는 앱이므로
        앱이 이 값을 따라가지 않는다. 다르면 앱이 재전송으로 교정).
      notify: 적용된 write마다 에코백 [0x01, char#, 원본...]. 거부된 write는
        에코 없음 — 앱이 타임아웃으로 감지한다. 유효 모드 push(0x03)와 객체
-       인식 Status(0x02)는 부위 러너 단계(다음)에서 송신 시작 — 요청/유효
-       모드가 갈라지는 첫 지점이 그때라서.
+       인식 Status(0x02)는 부위 러너가 보낸다 — 요청/유효 모드가 갈라지는
+       지점이 거기라서.
   3. 풍량 세기 0(정지)은 공용·부위 어느 대상에도 허용한다. 부위 세 개가 모두
      0이어도 유효한 설정이며(사용자가 바람만 끈 상태), 그때 부위 러너는 조준을
      계속하되 릴레이를 돌리지 않는다 — control/body_wind.py _route 참고.
-  4. 유효 모드(_effective_mode) 도입 — 요청 모드(앱이 write한 값)와 별개로
-     RPi가 실제로 돌리는 모드. 부위 러너의 추적 폴백 중에만 갈라진다(아래 5).
-  5. 부위 모드(0x03) 실동작 — 단일 세션 러너(_make_body_runner)가 내부 2상으로
-     돈다. v2는 0x03을 0x02와 동일 취급 + 풍속 0이었다.
+  4. 유효 모드(_effective_mode) — 요청 모드(앱이 write한 값)와 별개로 RPi가
+     실제로 돌리는 모드. 부위 러너의 추적 폴백 중에만 갈라진다(아래 5).
+  5. 부위 모드(0x03) — 단일 세션 러너(app/runners.py _make_body_runner)가
+     내부 2상으로 돈다.
        순찰(patrol): BodyPatrolScenario(control/body_wind.py)가 head→upper→
          lower 순회(세기 0 부위 제외). 부위 각도는 반복 수렴 스캔이 아니라
          **한 프레임 직접 매핑**으로 잡고 곧바로 순찰에 들어간다(수직 FOV 67°
@@ -62,8 +60,7 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
      유효 모드 push [0x03, 모드]가 나간다. 폴백 중 가슴을 잃으면 마지막 조준을
      유지한다(재탐색 스윕은 순찰 상의 search 몫 — 알려진 한계).
      부위 러너는 --axis와 무관하게 팬+틸트를 모두 쓴다.
-     0x02↔0x03 전환은 이제 러너가 달라 세션이 재시작된다(v2 docstring 8의
-     "0x02↔0x03 세션 유지"는 v3에서 성립하지 않음).
+     0x02↔0x03 은 러너가 달라 카메라 세션이 재시작된다.
   6. notify 스레드 규칙 — 러너 스레드는 report_effective/report_recognized로
      보고하고, 서비스가 loop.call_soon_threadsafe로 BLE asyncio 루프에 넘긴다
      (dbus_fast는 스레드 안전하지 않음). 객체 인식 Status [0x02, x]는 인식
@@ -72,11 +69,11 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
      나중에. 반대면 죽어가는 부위 러너의 마지막 프레임이 방금 적용한 릴레이
      값을 덮는 레이스가 있다. 부위 모드 중에는 서비스가 릴레이를 아예 건드리지
      않는다(러너 소유 — 러너 종료 시 finally에서 0으로 놓고 나온다).
-  8. 페어링 에이전트 등록 (NoIoAgent) — 이전 버전에는 없었다.
-     에이전트가 없으면 중앙(앱)이 본딩을 시도할 때 BlueZ가 응답할 수단이 없어
-     연결이 길게 매달리다 실패한다. 본딩은 그 기기와 **처음** 연결할 때 일어나
-     "RPi나 앱을 처음 실행할 때만 간혹 실패"로 나타난다 (실기 2026-08-27).
-     그래서 _ble_main을 v2에서 가져다 쓰지 않고 v3가 직접 구성한다.
+  8. 페어링 에이전트 등록 (NoIoAgent) — 에이전트가 없으면 중앙(앱)이 본딩을
+     시도할 때 BlueZ가 응답할 수단이 없어 연결이 길게 매달리다 실패한다.
+     본딩은 그 기기와 **처음** 연결할 때 일어나 "RPi나 앱을 처음 실행할 때만
+     간혹 실패"로 나타난다 (실기 2026-08-27). 그래서 _ble_main이 서비스 등록
+     전에 에이전트부터 붙인다.
   9. SIGHUP/SIGTERM 정리 (_exit_on_signals) — SSH가 끊기면 팬이 켜진 채
      남던 문제. 기본 동작이 즉시 종료라 finally가 안 돌던 것을 신호를
      KeyboardInterrupt로 바꿔 Ctrl+C와 같은 정리 경로를 타게 했다.
@@ -125,12 +122,12 @@ def _hex(value):
     return " ".join(f"0x{b:02X}" for b in value)
 
 
-class EswFanServiceV3(Service):
+class EswFanService(Service):
     """리모컨 주체 상태기 + STATUS 에코백/스냅샷 (docstring 1~4).
 
-    v2 서비스를 상속하지 않고 새로 정의한다 — bluez_peripheral의 characteristic
-    데코레이터는 클래스 정의에 묶여 있어 setter만 부분 교체할 수 없기 때문
-    (v2가 v1 서비스를 새로 쓴 것과 같은 이유).
+    bluez_peripheral의 characteristic 데코레이터는 클래스 정의에 묶여 있다 —
+    상속으로 setter만 부분 교체할 수 없어서, 기능이 바뀔 때마다 서비스 클래스를
+    통째로 새로 정의해 왔다.
     """
 
     _CHAR_NO = {"power": 1, "mode": 2, "wind": 3}   # 에코백의 Characteristic 번호
@@ -186,7 +183,7 @@ class EswFanServiceV3(Service):
     # ── 러너 보고 통로 (docstring 6) ─────────────────────────────────────────
 
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """BLE asyncio 루프 연결 — _ble_main_v3가 시작 시 1회 호출."""
+        """BLE asyncio 루프 연결 — _ble_main이 시작 시 1회 호출."""
         self._loop = loop
 
     def _notify_threadsafe(self, payload: bytes) -> None:
@@ -279,7 +276,7 @@ class EswFanServiceV3(Service):
         return self._snapshot()   # read = 스냅샷 (앱의 불일치 검증용 — docstring 2)
 
     def handle_disconnect(self) -> None:
-        """앱(중앙) 연결 끊김 = 전원 OFF 처리 (v2 docstring 9와 동일 계약 —
+        """앱(중앙) 연결 끊김 = 전원 OFF 처리 (docstring 9 —
         끊기면 양쪽 다 OFF로 수렴하므로 끊긴 동안의 불일치가 성립하지 않는다)."""
         if not self._power_on:
             return
@@ -312,8 +309,9 @@ def _exit_on_signals() -> None:
             print(f"[E2E] {name} 핸들러 설치 실패 — 그 신호로 종료 시 정리 안 됨: {e}")
 
 
-async def _ble_main_v3(service: EswFanServiceV3) -> None:
-    """v2 _ble_main + BLE 루프 연결(docstring 6) + 페어링 에이전트(docstring 8)."""
+async def _ble_main(service: EswFanService) -> None:
+    """BLE 부팅 — 페어링 에이전트(docstring 8) → 서비스 등록 → 끊김 감시
+    → Advertising. 시작 시 서비스에 asyncio 루프를 물려준다(docstring 6)."""
     service.attach_loop(asyncio.get_running_loop())
     bus = await get_message_bus()
 
@@ -348,13 +346,13 @@ async def _ble_main_v3(service: EswFanServiceV3) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="BLE 추적/풍속 + STATUS 동기화 (v3)")
+    p = argparse.ArgumentParser(description="AI 스마트 타겟 선풍기 — BLE 추적/부위별 풍속")
     p.add_argument("--axis", choices=("pan", "tilt", "pantilt"), required=True,
                    help="타겟 모드일 때 돌릴 추적 축")
     p.add_argument("--model", default="multipose_lightning.tflite")
     p.add_argument("--conf", type=float, default=_TRK["conf"], help="키포인트 신뢰도 임계값")
     p.add_argument("--threads", type=int, default=_TRK["threads"], help="TFLite 스레드 수")
-    # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰임 — verify_track_*.py 참고) ────
+    # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰인다) ─────────────────────────
     p.add_argument("--gain-pan", type=float, default=_TRK["gain"]["pan"])
     p.add_argument("--gain-tilt", type=float, default=_TRK["gain"]["tilt"])
     p.add_argument("--deadzone-pan", type=float, default=_TRK["deadzone"]["pan"])
@@ -370,7 +368,7 @@ def main() -> None:
     p.add_argument("--invert-tilt", action="store_true")
     p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
                    help="--axis tilt 전용 조준 부위")
-    # ── 기본-회전 모드 (0x01) 스윕 (v2 docstring 7) ──────────────────────────
+    # ── 기본-회전 모드 (0x01) 스윕 ───────────────────────────────────────────
     p.add_argument("--rotate-span", type=float, default=60.0,
                    help="회전 모드 pan 스윕 반각 — 0° 기준 ±°")
     p.add_argument("--rotate-lead", type=float, default=3.0,
@@ -441,7 +439,7 @@ def main() -> None:
 
     # 창을 원했는지 기억해두고, 추적 세션 스레드에서는 imshow가 절대 안 불리게
     # no_window를 강제한다. 창은 _window_viewer 전용 스레드가 대신 그린다
-    # (v1 docstring 참고 — 프레임 통로로 web_state를 재사용).
+    # (프레임 통로로 web_state를 재사용 — app/camera.py _window_viewer 참고).
     local_window = not args.no_window
     serve_http = args.web
     args.no_window = True
@@ -511,9 +509,9 @@ def main() -> None:
             if args.dry_run:
                 fan_cm = _DryRelay()
             else:
-                # lgpio를 최상단에서 import하는 모듈이라 지연 import (v2 docstring 5)
+                # lgpio를 최상단에서 import하는 모듈이라 지연 import — --dry-run 개발 PC 대응
                 from hardware.relay_controller import FanRelay
-                fan_cm = FanRelay(CFG, handle=mc.h)  # gpiochip 핸들 공유 (v2 docstring 4)
+                fan_cm = FanRelay(CFG, handle=mc.h)  # gpiochip 핸들 공유 (mc보다 먼저 닫혀야 함)
 
             with fan_cm as fan:  # mc보다 먼저 닫힘 — 공유 핸들이 살아있을 때 전부 오픈
                 body_gains = (args.gain_pan, args.gain_tilt)
@@ -526,15 +524,15 @@ def main() -> None:
                                                _make_homer(mc, home_pan=True),
                                                stop_fn=mc.stop,
                                                web_state=web_state)
-                service = EswFanServiceV3(supervisor, fan)
+                service = EswFanService(supervisor, fan)
                 # 부위 러너와 인식 보고기는 서비스의 report_*를 쓰므로 나중에 연결.
                 supervisor.set_body_runner(_make_body_runner(
                     detector, tracker, mc, fan, service, body_gains, args, web_state))
                 reporting_detector.attach(service)
 
-                print(f"[E2E] axis={args.axis} — BLE 전원/모드/풍량 명령 대기 중 (v3).")
+                print(f"[E2E] axis={args.axis} — BLE 전원/모드/풍량 명령 대기 중.")
                 try:
-                    asyncio.run(_ble_main_v3(service))
+                    asyncio.run(_ble_main(service))
                 except KeyboardInterrupt:
                     print("\n[E2E] Ctrl+C 종료")
                 finally:

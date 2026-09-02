@@ -1,15 +1,17 @@
 """
 app/tracking.py - 팬/틸트 닫힌 루프 공유 모듈
-(개발 이력상 tracking_core.py)
 
-팬 단독 / 틸트 단독 / 두 축 동시, 세 개의 축별 검증 스크립트가 각각 독립적으로
-갖고 있던 while-루프 본문과 헬퍼(chest_point/_DryMotor/_open_motor)를 모아둔 것이다. 계산/제어 로직은 원본에서 한 글자도 바꾸지 않았고, `while True`만
-`while not stop_event.is_set()`으로 바뀌었다 — 각 verify_track_*.py는 이 함수들을
-호출하도록 리팩터되어 있으며 `stop_event`를 아무도 set하지 않으므로 단독 실행 시
-동작은 기존과 100% 동일하다.
+팬 단독 / 틸트 단독 / 두 축 동시를 한 함수(run_tracking)로 다룬다 — 축마다 따로
+검증하던 시절 세 스크립트가 각자 갖고 있던 while-루프 본문과 헬퍼를 모은 것이라,
+계산/제어 로직은 그때 실기로 확인한 것과 같다. 루프 조건만 `while True` 에서
+`while not stop_event.is_set()` 으로 바뀌었다.
 
 app/runners.py 의 _make_runner 가 BLE "타겟 모드" 명령에 맞춰 이 함수를 백그라운드
 스레드로 시작/정지시킨다 (stop_event.set() 후 join).
+
+여기 있는 것: run_tracking(닫힌 루프 본문), chest_point/_axes_idle/_draw_overlay
+(부위 러너와 공용 헬퍼), _DryMotor/_DryRelay(--dry-run 스텁), 모터 핸들 열기와
+상태파일 CLI 인자.
 """
 
 from __future__ import annotations

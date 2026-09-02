@@ -1,6 +1,5 @@
 """
 app/camera.py - 카메라 백엔드 · 포즈 시각화 · MJPEG 웹스트림
-(개발 이력상 verify_movenet.py)
 
 이 파일은 계산 로직을 포함하지 않습니다. 실제 추정/선정/추적 로직은
 vision/pose_estimator.py, vision/target_selector.py, vision/pose_tracker.py에

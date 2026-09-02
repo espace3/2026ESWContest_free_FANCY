@@ -5,11 +5,6 @@
 > 않아 **제출본에 포함되어 있지 않습니다.** 개발 브랜치(`main`)에 있으며, 재측정이
 > 필요할 때 가져와 쓰면 됩니다.
 
-> **참고**: 이 문서가 언급하는 계측·단독 검증 스크립트(`verify_motor.py`,
-> `verify_track_*.py`, `verify_pulse_jitter.py`, `hold_enable.py` 등)는 실행에 필요하지
-> 않아 **최종본에 포함되어 있지 않습니다.** 개발 저장소에 있으며, 재측정이 필요할 때
-> 가져와 쓰면 됩니다.
-
 `scripts/verify_pulse_jitter.py` 실측 원본. 배경·가설 배제 과정·채택한 대책은
 [`../lgpio_patch.md`](../lgpio_patch.md)에 있고, 이 문서는 **그 판단의 근거가 된 숫자**만 남긴다.
 

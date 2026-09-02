@@ -14,11 +14,11 @@ app/runners.py - 모드별 러너 팩토리 + 모드 감독
   _make_sweeper      기본-회전 모드(0x01) 스윕    카메라 X
   _make_homer        복귀 후 대기 (고정·파킹)     카메라 X
 
-이력: 원래 세 파일(app/ble_protocol.py, app/ble_service.py, main.py)에 v1/v2/v3
-개발 순서대로 흩어져 있었고, supervisor 는 _TrackingSupervisor →
-_ModeSupervisor → _ModeSupervisorV3 3단 상속인데 인스턴스화되는 구체 클래스는
-마지막 하나뿐이었다. "어느 파일의 어느 클래스가 실제로 도는가"를 매번 확인해야
-해서 책임별로 모으고 한 클래스로 합쳤다 (2026-09-02).
+이력: 원래 이 코드는 기능을 하나씩 얹으며 만든 세 개의 통합 스크립트에 개발
+순서대로 흩어져 있었고, supervisor 도 그 순서대로 3단 상속이었다(인스턴스화되는
+구체 클래스는 마지막 하나뿐). "어느 파일의 어느 클래스가 실제로 도는가"를 매번
+확인해야 해서 책임별로 모으고 한 클래스로 합쳤다 (2026-09-02). 그 단계별 코드는
+git 이력에 있다.
 """
 
 from __future__ import annotations
@@ -494,7 +494,7 @@ async def _watch_disconnects(bus, service) -> None:
     (docstring 9 — bluez_peripheral엔 연결 이벤트 API가 없어 D-Bus 직접 구독).
 
     service 는 handle_disconnect() 를 가진 GATT 서비스면 된다 (main.py 의
-    EswFanServiceV3)."""
+    EswFanService)."""
     await bus.call(Message(
         destination="org.freedesktop.DBus", path="/org/freedesktop/DBus",
         interface="org.freedesktop.DBus", member="AddMatch", signature="s",

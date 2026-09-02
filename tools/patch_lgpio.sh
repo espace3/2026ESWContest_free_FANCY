@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# lgpio EINVAL 무한 스핀 패치 — Pi에서 실행 (lgpio_patch.md "2026-08-25" 절 참고)
+# lgpio EINVAL 무한 스핀 패치 — Pi에서 실행
+# 진단 경위·확정 근거는 docs/hardware_todo.md 의
+# "타겟 추적 중 팬·틸트 동시 정지" 항목에 있다 (지터 문서인 lgpio_patch.md 가 아니다).
 #
 # 무엇을 고치나: liblgpio의 송출 스레드(lgPthTx.c)는 다음 깨어날 시각을
 #   pthTxDelayMicros로 계산하는데, 큐 소진 이벤트 시 이 값이 음수가 될 수 있다.
@@ -157,7 +159,7 @@ if ! strings "$AFTER" | grep -q "$MARKER"; then
     ldconfig -p | grep -i lgpio || true
     echo "     --- /etc/ld.so.conf.d 순서 ---"
     cat /etc/ld.so.conf /etc/ld.so.conf.d/*.conf 2>/dev/null || true
-    echo "     해결은 lgpio_patch.md의 수동 절차(dpkg-divert) 참고."
+    echo "     구본이 계속 이기면 dpkg-divert 로 구본을 비켜 세워야 한다."
     exit 1
 fi
 echo "   ✔ 패치본이 로드된다"

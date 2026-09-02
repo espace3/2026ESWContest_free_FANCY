@@ -165,15 +165,6 @@ docstring에 있습니다.
 | 동작 소음 | < 35 dB | (미측정) — 펄스 지터 대책으로 달그락 소음은 제거 |
 | 모터 위치 정확도 | < 2° | (미측정) — 펄스 타이밍 드리프트는 3~7% → **1% 미만** |
 
-**부수 실측값**
-
-| 항목 | 값 | 근거 |
-|---|---|---|
-| 팬 순항 속도 | 7.87 °/s | `f_max` 7000, 마이크로스텝 1/16, 기어비 100 |
-| 틸트 순항 속도 | 7.29 °/s | `f_max` 6000, 기어비 92.6 (무부하 벤치 실측) |
-| 틸트 가동 범위 | −25° ~ **+15°** | +15°는 기구 파손 한계 (실측 확정, 초과 금지) |
-| 드라이버 VREF | 양축 0.7 V | 1.1/1.3V에서 두 축 동시 구동 시 팬 정지 → 0.7V로 해결 |
-
 측정은 주장이 아니라 코드로 합니다 — FPS는 `app/camera.py`의 `fps_hist`가,
 펄스 타이밍은 `--timing`이 실행 중에 찍습니다.
 
@@ -198,9 +189,8 @@ BLE에 보고합니다 (`dbus_fast`가 스레드 안전하지 않기 때문).
 |---|---|
 | [`docs/ble_protocol.md`](docs/ble_protocol.md) | BLE UUID·바이트 형식·상태 동기화 계약 (RPi 구현 기준) |
 | [`docs/tracking_feedback.md`](docs/tracking_feedback.md) | 추적 제어 원리 — 왜 절대 조준이 아니라 피드백인지, 거리를 몰라도 되는 이유, 데드존을 각도에 거는 이유 |
-| [`docs/lgpio_patch.md`](docs/lgpio_patch.md) | 부하 시 모터 달그락 소음 — 배제한 가설 8종, 원인(펄스 스레드 선점), 채택한 대책과 확인법 |
+| [`docs/lgpio_patch.md`](docs/lgpio_patch.md) | 모터가 시끄럽거나 멈출 때 — 세 가지 문제(펄스 지터 / lgpio EINVAL 스핀 / VREF 과다)의 지문과 원인, 배제한 가설 |
 | [`docs/angle_calibration.md`](docs/angle_calibration.md) | 각도 오차의 원인(기어비·백래시·탈조·원점)을 가르는 실험 순서와 보정식 |
 | [`docs/pulse_jitter_data.md`](docs/pulse_jitter_data.md) | 펄스 스레드 지터 실측표 — RT 승격 대책의 근거 |
-| [`docs/hardware_todo.md`](docs/hardware_todo.md) | 문제 해결 기록 — 모터가 멈추던 두 문제(lgpio EINVAL 스핀 / VREF 과다)의 진단 경위와 배제한 가설, 그리고 잔여 검증 항목 |
 
 **구현 전에 알고리즘을 문서로 정리하고, 코드가 바뀌면 문서도 함께 갱신합니다.**

@@ -2,8 +2,7 @@
 target_fan / config.py
 전체 프로젝트 설정을 한 곳에서 관리합니다.
 
-실기 검증을 마친 값만 둡니다. 미결 항목은 여기 적지 않고
-docs/hardware_todo.md 에 모읍니다.
+실기 검증을 마친 값만 둡니다.
 """
 
 from pathlib import Path
@@ -111,7 +110,7 @@ CFG: dict = {
     },
 
     # ── 회전 소프트 리밋 (°) ─────────────────────────────────────────────────
-    # 회전 금지 구역(HW deadline)은 조립 후 확정 (docs/hardware_todo.md).
+    # 회전 금지 구역(HW deadline)은 조립 후 확정.
     # control 쪽 clamp_angle()에 물려서 쓴다 (stepper는 재검사하지 않음).
     #
     # ⚠ 틸트 부호: +가 아래(헤드가 숙임), -가 위다

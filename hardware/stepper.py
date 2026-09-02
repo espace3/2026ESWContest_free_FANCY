@@ -47,7 +47,7 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
   - 짧은 이동(가속+감속 거리 미달)은 램프를 앞에서부터 잘라 쓰고, 아주 짧으면
     램프 없이 f_start 저속으로만 보낸다. 기어비 반영 후 이 경로는 pan 0.135°
     (=2구간 120스텝) 미만의 잔이동만 탄다 — 몇 스텝까지 정확히/조용히
-    움직이는지 실측 필요 (docs/hardware_todo.md).
+    움직이는지 실측 필요.
 
   - 위치 기억(장부 영속화): 리밋 스위치·엔코더가 없어 절대 원점을 잴 수단이
     없으므로, 장부를 주기적으로 파일에 남겨 재시작 때 되살린다
@@ -60,9 +60,6 @@ GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직�
     전용 코어 + RT로 격리한다 — 원리·실측·확인법은 docs/lgpio_patch.md.
     timing=True(스크립트 --timing)로 이동 구간마다 드리프트·언더런을 찍어 재검증할 수
     있다. 언더런이 0이 아니면 펄스가 실제로 끊긴 것이다.
-
-미결 항목(각도 정확도 보정, DIR 부호 실기 확인, 호밍 수단, 회전 금지
-구역)은 docs/hardware_todo.md 에 모아둔다.
 """
 
 from __future__ import annotations
@@ -571,7 +568,7 @@ class MotorController:
         헤드가 돌아간 채 죽은 다음 실행에서 그냥 부르면 그 자리가 새 0°가 된다.
         재시작 경로에서는 이걸 직접 부르지 말고 restore_origin()을 쓸 것 —
         상태 파일이 있으면 되살리고, 없을 때만(첫 실행) home()으로 떨어진다.
-        리밋 스위치/엔코더 도입 전까지의 방편 (docs/hardware_todo.md)."""
+        리밋 스위치/엔코더 도입 전까지의 방편."""
         for ax in (self.pan, self.tilt):
             with ax.cond:
                 if not (ax.idle and ax.target_steps == ax.pos_steps):

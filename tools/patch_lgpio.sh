@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # lgpio EINVAL 무한 스핀 패치 — Pi에서 실행
-# 진단 경위·확정 근거는 docs/hardware_todo.md 의
-# "타겟 추적 중 팬·틸트 동시 정지" 항목에 있다 (지터 문서인 lgpio_patch.md 가 아니다).
+# 진단 경위·확정 근거는 docs/lgpio_patch.md 의 "2. EINVAL 무한 스핀" 절.
 #
 # 무엇을 고치나: liblgpio의 송출 스레드(lgPthTx.c)는 다음 깨어날 시각을
 #   pthTxDelayMicros로 계산하는데, 큐 소진 이벤트 시 이 값이 음수가 될 수 있다.

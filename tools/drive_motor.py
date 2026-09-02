@@ -19,7 +19,7 @@ docs/angle_calibration.md, 펄스 타이밍(--timing)의 배경은 docs/lgpio_pa
         # 이동 중 목표 갈아타기: pan +720°(tilt +90°) 출발 → 도중 0°로 선점.
         # 감속→반전이 부드러운지, 최종이 시작 마커(0°)로 돌아오는지 확인
     python tools/drive_motor.py --axis pan --short
-        # 짧은 이동 한계 실측 — 1/5/10/20/50스텝 단발 (docs/hardware_todo.md 항목)
+        # 짧은 이동 한계 실측 — 1/5/10/20/50스텝 단발
     python tools/drive_motor.py --axis pan --track-sim 10
         # 20Hz 랜덤 잔이동 10초 — 실전 추적 근사 (논블로킹 동작 확인)
 """
@@ -102,7 +102,7 @@ def run_preempt(mc, mv, axis: str) -> None:
 
 
 def run_short(mc, axis: str) -> None:
-    """짧은 이동 실측: 몇 스텝까지 정확히/조용히 움직이는지 (docs/hardware_todo.md 항목)."""
+    """짧은 이동 실측: 몇 스텝까지 정확히/조용히 움직이는지."""
     ax = mc.pan if axis == "pan" else mc.tilt
     print(f"{axis} 1스텝 = {ax.deg_per_step:.5f}°")
     pos = 0

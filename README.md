@@ -177,8 +177,8 @@ docs/                     프로토콜·알고리즘·실측 문서 (아래 표 
 ```
 main.py                 ← 진입점. BLE 서비스, 부위 모드 러너, 전체 상태기계
 app/
- ├── ble_service.py        모드 감독, 풍속 릴레이 연동, 전원 게이팅, 회전·원점복귀 러너
- │    └── ble_protocol.py    BLE 프로토콜 상수(UUID·모드·풍량), GATT 서버 부팅, 추적 러너
+ ├── ble_service.py        모드 러너(회전·원점복귀), 모드 감독, 연결 끊김 감지
+ │    └── ble_protocol.py    BLE 프로토콜 상수(UUID·모드·풍량), 추적 러너, supervisor 기반 클래스
  ├── tracking.py           팬/틸트 닫힌 루프 본문, 모터 핸들 열기, 상태파일 인자,
                            전신 추적 공용 헬퍼(조준점·오버레이)
  └── camera.py             카메라 백엔드 3종(picamera2 / rpicam-vid / OpenCV),
@@ -189,17 +189,21 @@ scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
 | 파일 | 역할 |
 |---|---|
 | **`main.py`** | **진입점.** STATUS 실구현(read 스냅샷 + notify 에코백), 요청/유효 모드 분리, 부위 모드(순찰 ↔ 추적 폴백) |
-| `app/ble_service.py` | 모드 감독(`_ModeSupervisor`), 풍속 릴레이 실구동, 전원 게이팅, 연결 끊김 처리 |
-| `app/ble_protocol.py` | BLE UUID·모드·풍량 상수, GATT 서버 부팅, 타겟 모드 → 추적 러너 |
+| `app/ble_service.py` | 모드 감독(`_ModeSupervisor`), 기본 모드 러너(회전·복귀), 연결 끊김 감지 |
+| `app/ble_protocol.py` | BLE UUID·모드·풍량 상수, 타겟 모드 추적 러너, supervisor 기반 클래스 |
 | `app/tracking.py` | 팬/틸트 닫힌 루프 본문(`run_tracking`), 모터 핸들 열기, 공용 헬퍼 |
 | `app/camera.py` | 카메라 캡처 백엔드, MJPEG 웹스트림, 포즈 시각화 |
 | `scripts/set_origin.py` | 최초 1회 영점 설정 — [설치](#설치) 5번 |
 
 `app/`의 모듈들은 개발 과정에서 각각 `verify_E2E_v1/v2`, `verify_fulltrack`,
-`tracking_core`, `verify_movenet`이라는 이름의 검증 스크립트로 시작해, 기능이 확정되면서
-상위 단계가 그대로 import해 쓰는 모듈이 된 것들입니다. **각 파일 상단 docstring에는
-이전 버전과의 차이만** 기록해 두었으니, 개발이 어떤 순서로 쌓였는지는 그 docstring들을
-`ble_protocol → ble_service → main` 순서로 읽으면 됩니다.
+`tracking_core`, `verify_movenet`이라는 이름의 **독립 실행 검증 스크립트**로 시작해,
+기능이 확정되면서 상위 단계가 import해 쓰는 라이브러리가 된 것들입니다. 단계별
+진입점(각자의 `main()`과 GATT 서비스 클래스)은 `main.py`가 그 역할을 모두 넘겨받은
+뒤 제거했습니다 — 안 도는 코드가 남아 있으면 읽는 쪽이 매번 "이게 실제로 실행되나"를
+확인해야 하기 때문입니다. 그 단계별 코드는 git 이력에 있습니다.
+
+지금 실행 가능한 진입점은 **`main.py`(전체 시스템)와 `app/camera.py`(카메라·인식만)
+둘뿐**이고, 설계 근거는 각 파일 상단 docstring에 남겨 두었습니다.
 
 ---
 

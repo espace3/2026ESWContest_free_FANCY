@@ -1,15 +1,16 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-app/ble_protocol.py - BLE 프로토콜 상수 · GATT 서버 부팅 · 추적 러너
-(개발 이력상 verify_E2E_v1.py — 프로토콜 명세는 docs/ble_protocol.md)
+app/ble_protocol.py - BLE 프로토콜 상수 · 추적 러너 · supervisor 기반 클래스
+(프로토콜 명세는 docs/ble_protocol.md)
 
-앱에서 "타겟 모드"(모드 write 0x02/0x03)를 켜면 --axis로 지정한 축의
-추적 루프(app/tracking.py의 run_*_tracking, verify_track_pan/tilt/pantilt.py와
-동일 로직)를 백그라운드 스레드로 시작하고, 전원을 끄거나 기본 모드로 돌아가면
-정지한다. 추적 연동만 담은 최소 통합 단계라 부위 인식 모드(0x03)의 머리/상체/
-하체 개별 조준은 다루지 않고(그건 main.py의 부위 러너 몫), 풍량 write도 print만
-한다. 실제 릴레이 구동과 부위 모드는 app/ble_service.py → main.py 에서 붙는다.
+라이브러리 전용 — 진입점은 main.py 하나다.
+
+  UUID 상수 / MODE_NAMES / WIND_TARGETS   앱과 맞춰야 하는 프로토콜 값
+  _make_runner        타겟 모드(0x02/0x03) 추적 러너 팩토리 (카메라 세션 포함)
+  _window_viewer      cv2 창 전용 스레드
+  _TrackingSupervisor 전원·모드 → 러너 시작/정지 (app/ble_service.py 가 확장)
+
+아래 카메라·cv2 설계 근거는 그대로 유효하다.
 
 카메라는 모터/디텍터와 달리 프로세스 전체가 아니라 **추적 세션(스레드)마다
 새로 열고 끝나면 반드시 해제**한다 — 특히 rpicam-vid(기본) 백엔드는
@@ -22,26 +23,10 @@ cv2 창은 추적 스레드가 직접 그리지 않는다 — HighGUI(GTK)는 �
 만든 _window_viewer 전용 스레드가 창을 전담한다. --web을 함께 켜면 같은
 프레임을 브라우저(http://<호스트>:8090/)로도 볼 수 있다.
 
-설치: 레포 루트의 README.md "설치" 절 참고
-    (requirements.txt + bluez_peripheral --pre).
-
-실행 (RPi 5, 레포 루트에서):
-    python3 app/ble_protocol.py --axis pan
-    python3 app/ble_protocol.py --axis tilt
-    python3 app/ble_protocol.py --axis pantilt --no-window
-    python app/ble_protocol.py --axis pan --dry-run --opencv   # 개발 PC, 모터/BLE 없이 파이프라인만
-
-축별 튜닝 인자는 verify_track_pan/tilt/pantilt.py와 이름이 같다
-(--gain-pan/--deadzone-pan/--target-cx는 pan·pantilt, --gain-tilt/--deadzone-tilt/
---target-cy/--tilt-min/--tilt-max는 tilt·pantilt, --region은 tilt 전용,
---limit은 pan 전용, --pan-min/--pan-max는 pantilt 전용). 고르지 않은 축의
-인자는 무시된다 — 정확한 의미는 각 verify_track_*.py 참고.
 """
 
 from __future__ import annotations
 
-import argparse
-import asyncio
 import sys
 import threading
 import time
@@ -53,20 +38,11 @@ import numpy as np
 # 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from bluez_peripheral.adapter import Adapter
-from bluez_peripheral.advert import Advertisement
-from bluez_peripheral.gatt import CharacteristicFlags as CharFlags
-from bluez_peripheral.gatt import Service, characteristic
-from bluez_peripheral.util import get_message_bus
-
 from config import CFG
 
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
-from vision.pose_estimator import MoveNetMultiPoseDetector
-from vision.pose_tracker import PoseTracker
-from app.tracking import add_state_args, open_motor_from_args, run_tracking
-from app.camera import (_open_camera, _read_frame, _release_camera,
-                            _WebStreamState, _make_handler, _ThreadedHTTP)
+from app.tracking import run_tracking
+from app.camera import _open_camera, _read_frame, _release_camera
 
 # ── 프로토콜 (docs/ble_protocol.md 와 일치해야 함) ──
 UUID_BASE = "14d7{:04x}-7197-49e5-a017-0b2f308120f0"
@@ -243,185 +219,3 @@ class _TrackingSupervisor:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=timeout)
-
-
-class EswFanService(Service):
-    def __init__(self, supervisor: _TrackingSupervisor):
-        super().__init__(SERVICE_UUID, True)
-        self._supervisor = supervisor
-
-    @characteristic(POWER_UUID, CharFlags.WRITE)
-    def power(self, options):
-        raise NotImplementedError()
-
-    @power.setter
-    def power(self, value, options):
-        if len(value) != 1 or value[0] not in (0x00, 0x01):
-            print(f"[RX] 전원: 잘못된 값 ({_hex(value)})")
-            return
-        on = bool(value[0])
-        print(f"[RX] 전원: {'ON' if on else 'OFF'}")
-        self._supervisor.set_power(on)
-
-    @characteristic(MODE_UUID, CharFlags.WRITE)
-    def mode(self, options):
-        raise NotImplementedError()
-
-    @mode.setter
-    def mode(self, value, options):
-        if len(value) != 1 or value[0] not in MODE_NAMES:
-            print(f"[RX] 모드: 잘못된 값 ({_hex(value)})")
-            return
-        print(f"[RX] 모드: {MODE_NAMES[value[0]]}")
-        self._supervisor.set_mode(value[0])
-
-    @characteristic(WIND_UUID, CharFlags.WRITE)
-    def wind(self, options):
-        raise NotImplementedError()
-
-    @wind.setter
-    def wind(self, value, options):
-        if len(value) != 2 or value[0] not in WIND_TARGETS or not 1 <= value[1] <= 3:
-            print(f"[RX] 풍량: 잘못된 값 ({_hex(value)})")
-            return
-        print(f"[RX] 풍량: {WIND_TARGETS[value[0]]} {value[1]}단")
-        # 이 단계의 범위 밖 — 실제 릴레이 구동은 app/ble_service.py 부터.
-
-    # 상태(notify)는 4단계에서 에코백 구현 — 지금은 서비스 발견용으로만 등록.
-    @characteristic(STATUS_UUID, CharFlags.NOTIFY)
-    def status(self, options):
-        raise NotImplementedError()
-
-
-async def _ble_main(supervisor: _TrackingSupervisor) -> None:
-    bus = await get_message_bus()
-
-    service = EswFanService(supervisor)
-    await service.register(bus)
-
-    try:
-        adapter = await Adapter.get_first(bus)
-    except ValueError:
-        sys.exit("BLE 어댑터 없음 — 'bluetoothctl power on' 확인")
-
-    advert = Advertisement(LOCAL_NAME, [SERVICE_UUID], appearance=0x0000, timeout=0)
-    await advert.register(bus, adapter=adapter)
-
-    print(f"[BLE] Advertising 시작 — {LOCAL_NAME} (Ctrl+C 종료)")
-    await bus.wait_for_disconnect()
-
-
-def main() -> None:
-    p = argparse.ArgumentParser(description="BLE 타겟 모드 → 팬/틸트 추적 루프 연동 (v1)")
-    p.add_argument("--axis", choices=("pan", "tilt", "pantilt"), required=True,
-                   help="타겟 모드일 때 돌릴 추적 축")
-    p.add_argument("--model", default="multipose_lightning.tflite")
-    p.add_argument("--conf", type=float, default=_TRK["conf"], help="키포인트 신뢰도 임계값")
-    p.add_argument("--threads", type=int, default=_TRK["threads"], help="TFLite 스레드 수")
-    # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰임 — verify_track_*.py 참고) ────
-    p.add_argument("--gain-pan", type=float, default=_TRK["gain"]["pan"])
-    p.add_argument("--gain-tilt", type=float, default=_TRK["gain"]["tilt"])
-    p.add_argument("--deadzone-pan", type=float, default=_TRK["deadzone"]["pan"])
-    p.add_argument("--deadzone-tilt", type=float, default=_TRK["deadzone"]["tilt"])
-    p.add_argument("--target-cx", type=float, default=_TRK["target"]["cx"])
-    p.add_argument("--target-cy", type=float, default=_TRK["target"]["cy"])
-    lim = CFG["limits"]
-    p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
-    p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
-    p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"])
-    p.add_argument("--tilt-max", type=float, default=lim["tilt"]["max"])
-    p.add_argument("--invert-pan", action="store_true")
-    p.add_argument("--invert-tilt", action="store_true")
-    p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
-                   help="--axis tilt 전용 조준 부위")
-    # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
-    p.add_argument("--opencv", action="store_true")
-    p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
-                   help="Picamera2 를 먼저 시도 (기본: rpicam-vid 캡처)")
-    p.add_argument("--cam", type=int, default=0)
-    p.add_argument("--no-window", action="store_true")
-    p.add_argument("--dry-run", action="store_true",
-                   help="모터/lgpio 없이 각도 계산만 (개발 PC 검증용)")
-    add_state_args(p)
-    # ── 웹 스트림 ────────────────────────────────────────────────────────────
-    p.add_argument("--web", action="store_true", help="MJPEG 웹 스트림 송출")
-    p.add_argument("--web-host", default="0.0.0.0")
-    p.add_argument("--web-port", type=int, default=8090)
-    p.add_argument("--web-quality", type=int, default=75)
-    p.add_argument("--web-fps", type=float, default=20.0)
-    args = p.parse_args()
-
-    # 창을 원했는지 기억해두고, 추적 세션 스레드에서는 imshow가 절대 안 불리게
-    # no_window를 강제한다. 창은 _window_viewer 전용 스레드가 대신 그린다
-    # (프레임 전달 통로로 web_state를 재사용하므로 args.web을 켠다 —
-    #  HTTP 서버는 사용자가 --web을 명시한 경우에만 띄운다).
-    local_window = not args.no_window
-    serve_http = args.web
-    args.no_window = True
-    if local_window:
-        args.web = True
-
-    if not Path(args.model).exists():
-        print(f"[ERROR] 모델 없음: {args.model}")
-        sys.exit(1)
-    if args.tilt_min >= args.tilt_max:
-        print("[ERROR] --tilt-min은 --tilt-max보다 작아야 합니다")
-        sys.exit(1)
-    if args.axis in ("pan", "pantilt") and args.pan_min >= args.pan_max:
-        print("[ERROR] --pan-min은 --pan-max보다 작아야 합니다")
-        sys.exit(1)
-
-    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf,
-                                        min_person_score=_TRK["min_person_score"],
-                                        num_threads=args.threads)
-    tracker = PoseTracker()
-
-    web_srv = web_state = viewer_thread = None
-    viewer_stop = threading.Event()
-    if args.web:
-        web_state = _WebStreamState(args.web_quality, args.web_fps)
-        if serve_http:
-            web_srv = _ThreadedHTTP((args.web_host, args.web_port), _make_handler(web_state))
-            threading.Thread(target=web_srv.serve_forever, daemon=True).start()
-            print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
-        if local_window:
-            viewer_thread = threading.Thread(target=_window_viewer,
-                                             args=(web_state, viewer_stop), daemon=True)
-            viewer_thread.start()
-            print("[E2E] 로컬 창 뷰어 시작 (전용 GUI 스레드)")
-
-    motor_cm = open_motor_from_args(args)
-    try:
-        with motor_cm as mc:
-            mc.enable()
-            # 이전 실행이 돌아간 채 꺼졌으면 저장 위치만큼 되돌아와 중앙을 본다.
-            # 첫 실행이면 현재 위치가 0°(각 축)가 된다 — 시작 위치 마커 권장.
-            mc.restore_origin()
-
-            run_fn = _make_runner(args.axis, detector, tracker, mc, args, web_state)
-            supervisor = _TrackingSupervisor(run_fn, web_state=web_state)
-
-            print(f"[E2E] axis={args.axis} — BLE 타겟 모드(0x02/0x03) 명령 대기 중.")
-            try:
-                asyncio.run(_ble_main(supervisor))
-            except KeyboardInterrupt:
-                print("\n[E2E] Ctrl+C 종료")
-            finally:
-                supervisor.stop_and_join()
-                if args.axis in ("tilt", "pantilt"):
-                    # 웜기어(틸트)는 수동 복귀가 어려우므로 종료 시 0°로 되돌린다.
-                    print("[E2E] 0° 복귀 중...")
-                    mc.move_to(0.0, 0.0)
-                    if not mc.wait_until_idle(timeout=30):
-                        print("[E2E] 복귀 미완료 — 물리 위치를 확인하세요.")
-    finally:
-        if web_srv:
-            web_srv.shutdown(); web_srv.server_close()
-        viewer_stop.set()
-        if viewer_thread:
-            viewer_thread.join(timeout=3)  # destroyAllWindows는 뷰어 스레드 몫
-        print("\n[E2E] 종료")
-
-
-if __name__ == "__main__":
-    main()

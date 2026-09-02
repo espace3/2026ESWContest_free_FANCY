@@ -1,12 +1,18 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-app/ble_service.py - 모드 감독 · 풍속 릴레이 연동 · 전원 게이팅
-(개발 이력상 verify_E2E_v2.py)
+app/ble_service.py - 모드 러너 · 모드 감독 · 연결 끊김 감지
 
-app/ble_protocol.py(추적 연동 원형)와의 차이점만 기록합니다 — 카메라 세션 관리,
-cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 상단 docstring과
-동일하므로 반복하지 않습니다:
+라이브러리 전용 — 진입점은 main.py 하나다. 여기에는 모드마다 도는 러너 팩토리와
+그것을 갈아끼우는 supervisor, 그리고 BLE 연결 끊김 감지가 들어 있다.
+
+  _make_sweeper / _make_homer   기본 모드용 러너 팩토리 (카메라·디텍터 미사용)
+  _ModeSupervisor               전원·모드·풍속 → 러너 선택 및 스레드 교대
+  _watch_disconnects            BlueZ 연결 끊김 → 전원 OFF 처리
+  _DryRelay                     --dry-run용 릴레이 스텁
+
+아래 설계 근거는 이 파일이 독립 진입점이던 시절(verify_E2E_v2.py) 기록이다.
+1~6은 지금 main.py의 EswFanServiceV3가 이어받았고, 7~9가 이 파일에 남은 부분의
+근거다:
 
   1. FanRelay(hardware/relay_controller.py) 연결 — v1에서 print에 그치던
      WIND write가 실제 릴레이(TS0011)를 구동한다 (verify_ble_v2.py와 동일).
@@ -62,42 +68,20 @@ cv2 창 전용 스레드, 축별 튜닝 인자, 설치/실행 방법은 원형 �
      재연결한 앱은 프로토콜 가정대로 POWER ON부터 다시 보내면 된다
      (Advertising은 timeout=0이라 BlueZ가 끊김 후 자동 재개).
 
-실행 (RPi 5, 레포 루트에서):
-    python3 app/ble_service.py --axis pan
-    python3 app/ble_service.py --axis pantilt --no-window
-    python app/ble_service.py --axis pan --dry-run --opencv   # 개발 PC
 """
 
 from __future__ import annotations
 
-import argparse
-import asyncio
 import sys
-import threading
 from pathlib import Path
 
 # 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from bluez_peripheral.adapter import Adapter
-from bluez_peripheral.advert import Advertisement
-from bluez_peripheral.gatt import CharacteristicFlags as CharFlags
-from bluez_peripheral.gatt import Service, characteristic
-from bluez_peripheral.util import get_message_bus
 from dbus_fast.constants import MessageType
 from dbus_fast.message import Message
 
-from config import CFG
-
-_TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
-from vision.pose_estimator import MoveNetMultiPoseDetector
-from vision.pose_tracker import PoseTracker
-from app.tracking import add_state_args, open_motor_from_args
-from app.camera import _WebStreamState, _make_handler, _ThreadedHTTP
-from app.ble_protocol import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
-                           STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS,
-                           _TARGET_MODES, _hex, _make_runner, _window_viewer,
-                           _TrackingSupervisor)
+from app.ble_protocol import _TARGET_MODES, _TrackingSupervisor
 
 
 class _DryRelay:
@@ -238,125 +222,13 @@ class _ModeSupervisor(_TrackingSupervisor):
         self.set_state(self._power_on, self._mode, level)
 
 
-class EswFanServiceV2(Service):
-    """v1 서비스 + verify_ble_v2의 풍속 릴레이/전원 게이팅 결합.
 
-    전원/모드 write는 두 갈래로 갈라진다: 모터 러너(supervisor)와 풍속 게이팅.
-    풍량 write는 릴레이에 가고, 세기는 supervisor에도 통지한다(회전·풍속
-    연동 — docstring 7). 릴레이가 실제로 도는 조건은 "전원 ON 그리고
-    부위 모드 아님" 하나로 모았다(_apply_wind).
-    """
-
-    def __init__(self, supervisor: _ModeSupervisor, fan):
-        super().__init__(SERVICE_UUID, True)
-        self._supervisor = supervisor
-        self._fan = fan
-        self._power_on = False   # 시작 시 전원 OFF 가정 (앱이 POWER ON을 먼저 보냄)
-        self._mode = 0x00
-        self._basic_level = 0
-        self._target_level = 0
-        self._body_levels = {target: 0 for target in (0x01, 0x02, 0x03)}
-
-    def _active_level(self) -> int:
-        """현재 모드에서 사용할 저장 풍량을 반환한다."""
-        if self._mode in (0x00, 0x01):
-            return self._basic_level
-        if self._mode == 0x02:
-            return self._target_level
-        return self._body_levels.get(0x01, 0)
-
-    def _store_wind(self, target: int, level: int) -> None:
-        """현재 모드와 대상에 맞는 풍량 preset을 갱신한다."""
-        if self._mode in (0x00, 0x01):
-            self._basic_level = level
-        elif self._mode == 0x02 or target == 0x00:
-            self._target_level = level
-        else:
-            self._body_levels[target] = level
-
-    def _apply_state(self) -> int:
-        """현재 BLE 상태를 릴레이와 모터 supervisor에 함께 적용한다."""
-        stored_level = self._active_level()
-        level = stored_level if (self._power_on and self._mode != 0x03) else 0
-        self._fan.set_speed(level)
-        self._supervisor.set_state(self._power_on, self._mode, stored_level)
-        return level
-
-    def _apply_wind(self) -> int:
-        """게이트 상태대로 릴레이에 반영하고, 적용된 세기를 돌려준다.
-        전원 OFF 또는 부위 모드(0x03)면 0(정지) — docstring 2."""
-        return self._apply_state()
-
-    # write-only 특성도 getter 자리(placeholder)가 필요 — 읽기 시도 시에만 쓰인다.
-    @characteristic(POWER_UUID, CharFlags.WRITE)
-    def power(self, options):
-        raise NotImplementedError()
-
-    @power.setter
-    def power(self, value, options):
-        if len(value) != 1 or value[0] not in (0x00, 0x01):
-            print(f"[RX] 전원: 잘못된 값 ({_hex(value)})")
-            return
-        self._power_on = bool(value[0])
-        level = self._apply_wind()
-        print(f"[RX] 전원: {'ON' if self._power_on else 'OFF'} → 풍속 {level}단 적용")
-
-    @characteristic(MODE_UUID, CharFlags.WRITE)
-    def mode(self, options):
-        raise NotImplementedError()
-
-    @mode.setter
-    def mode(self, value, options):
-        if len(value) != 1 or value[0] not in MODE_NAMES:
-            print(f"[RX] 모드: 잘못된 값 ({_hex(value)})")
-            return
-        self._mode = value[0]
-        level = self._apply_wind()  # 부위 모드 진입 시 0, 이탈 시 저장 세기 재적용
-        print(f"[RX] 모드: {MODE_NAMES[value[0]]} → 풍속 {level}단 적용")
-
-    @characteristic(WIND_UUID, CharFlags.WRITE)
-    def wind(self, options):
-        raise NotImplementedError()
-
-    @wind.setter
-    def wind(self, value, options):
-        # 세기 0x00(정지)은 프로토콜 원문(1~3)보다 앞서 받는 확장 — docstring 3.
-        if len(value) != 2 or value[0] not in WIND_TARGETS or not 0 <= value[1] <= 3:
-            print(f"[RX] 풍량: 잘못된 값 ({_hex(value)})")
-            return
-        self._store_wind(value[0], value[1])
-        if not self._power_on:
-            note = "전원 OFF — 저장만 (ON 시 적용)"
-        elif self._mode == 0x03:
-            note = "부위 모드 — 저장만 (모드 이탈 시 적용)"
-        else:
-            self._apply_wind()
-            note = "릴레이 적용"
-        applied = self._active_level() if self._mode != 0x03 else 0
-        level_txt = "정지" if value[1] == 0 else f"{value[1]}단"
-        # 대상별 preset은 저장하지만, 실제 부위별 풍향/풍속 중재는 아직
-        # 4단계 상위 통합부 몫이다 (docstring 6).
-        print(f"[RX] 풍량: {WIND_TARGETS[value[0]]} {level_txt} → {note} "
-              f"(현재 적용 {applied}단)")
-
-    # 상태(notify)는 4단계에서 에코백 구현 — 지금은 서비스 발견용으로만 등록.
-    @characteristic(STATUS_UUID, CharFlags.NOTIFY)
-    def status(self, options):
-        raise NotImplementedError()
-
-    def handle_disconnect(self) -> None:
-        """앱(중앙) 연결 끊김 — 전원 OFF write와 동일 처리 (docstring 9).
-        write 콜백과 같은 asyncio 루프에서 불리므로 동시성 문제 없음."""
-        if not self._power_on:
-            return
-        print("[BLE] 연결 끊김 → 전원 OFF 처리 (풍속 정지 + 0°,0° 파킹)")
-        self._power_on = False
-        self._apply_wind()
-
-
-async def _watch_disconnects(bus, service: EswFanServiceV2) -> None:
+async def _watch_disconnects(bus, service) -> None:
     """BlueZ Device1.Connected 프로퍼티 변경을 구독해 연결 끊김을 감지한다
-    (docstring 9 — bluez_peripheral엔 연결 이벤트 API가 없어 D-Bus 직접 구독)."""
+    (docstring 9 — bluez_peripheral엔 연결 이벤트 API가 없어 D-Bus 직접 구독).
+
+    service 는 handle_disconnect() 를 가진 GATT 서비스면 된다 (main.py 의
+    EswFanServiceV3)."""
     await bus.call(Message(
         destination="org.freedesktop.DBus", path="/org/freedesktop/DBus",
         interface="org.freedesktop.DBus", member="AddMatch", signature="s",
@@ -379,165 +251,3 @@ async def _watch_disconnects(bus, service: EswFanServiceV2) -> None:
             service.handle_disconnect()
 
     bus.add_message_handler(_handler)
-
-
-async def _ble_main(service: EswFanServiceV2) -> None:
-    bus = await get_message_bus()
-
-    await service.register(bus)
-    await _watch_disconnects(bus, service)
-
-    try:
-        adapter = await Adapter.get_first(bus)
-    except ValueError:
-        sys.exit("BLE 어댑터 없음 — 'bluetoothctl power on' 확인")
-
-    advert = Advertisement(LOCAL_NAME, [SERVICE_UUID], appearance=0x0000, timeout=0)
-    await advert.register(bus, adapter=adapter)
-
-    print(f"[BLE] Advertising 시작 — {LOCAL_NAME} (Ctrl+C 종료)")
-    await bus.wait_for_disconnect()
-
-
-def main() -> None:
-    p = argparse.ArgumentParser(description="BLE 타겟 모드 → 추적 + 풍속 릴레이 (v2)")
-    p.add_argument("--axis", choices=("pan", "tilt", "pantilt"), required=True,
-                   help="타겟 모드일 때 돌릴 추적 축")
-    p.add_argument("--model", default="multipose_lightning.tflite")
-    p.add_argument("--conf", type=float, default=_TRK["conf"], help="키포인트 신뢰도 임계값")
-    p.add_argument("--threads", type=int, default=_TRK["threads"], help="TFLite 스레드 수")
-    # ── 축별 튜닝 (axis에 따라 일부만 실제로 쓰임 — verify_track_*.py 참고) ────
-    p.add_argument("--gain-pan", type=float, default=_TRK["gain"]["pan"])
-    p.add_argument("--gain-tilt", type=float, default=_TRK["gain"]["tilt"])
-    p.add_argument("--deadzone-pan", type=float, default=_TRK["deadzone"]["pan"])
-    p.add_argument("--deadzone-tilt", type=float, default=_TRK["deadzone"]["tilt"])
-    p.add_argument("--target-cx", type=float, default=_TRK["target"]["cx"])
-    p.add_argument("--target-cy", type=float, default=_TRK["target"]["cy"])
-    lim = CFG["limits"]
-    p.add_argument("--pan-min", type=float, default=lim["pan"]["min"])
-    p.add_argument("--pan-max", type=float, default=lim["pan"]["max"])
-    p.add_argument("--tilt-min", type=float, default=lim["tilt"]["min"])
-    p.add_argument("--tilt-max", type=float, default=lim["tilt"]["max"])
-    p.add_argument("--invert-pan", action="store_true")
-    p.add_argument("--invert-tilt", action="store_true")
-    p.add_argument("--region", choices=("chest", "head", "upper", "lower"), default="chest",
-                   help="--axis tilt 전용 조준 부위")
-    # ── 기본-회전 모드 (0x01) 스윕 ───────────────────────────────────────────
-    p.add_argument("--rotate-span", type=float, default=60.0,
-                   help="회전 모드 pan 스윕 반각 — 0° 기준 ±° (docstring 7)")
-    p.add_argument("--rotate-lead", type=float, default=3.0,
-                   help="회전 모드에서 목표를 실제 위치보다 앞세울 각도 (°). "
-                        "모터가 큐를 비워 정지→재기동을 반복하지 않을 만큼이면 "
-                        "된다. 스윕 속도는 모터 순항 속도로 고정된다.")
-    # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
-    p.add_argument("--opencv", action="store_true")
-    p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
-                   help="Picamera2 를 먼저 시도 (기본: rpicam-vid 캡처)")
-    p.add_argument("--cam", type=int, default=0)
-    p.add_argument("--no-window", action="store_true")
-    p.add_argument("--dry-run", action="store_true",
-                   help="모터/릴레이/lgpio 없이 각도 계산·풍속 게이팅만 (개발 PC 검증용)")
-    add_state_args(p)
-    # ── 웹 스트림 ────────────────────────────────────────────────────────────
-    p.add_argument("--web", action="store_true", help="MJPEG 웹 스트림 송출")
-    p.add_argument("--web-host", default="0.0.0.0")
-    p.add_argument("--web-port", type=int, default=8090)
-    p.add_argument("--web-quality", type=int, default=75)
-    p.add_argument("--web-fps", type=float, default=20.0)
-    args = p.parse_args()
-
-    # 창을 원했는지 기억해두고, 추적 세션 스레드에서는 imshow가 절대 안 불리게
-    # no_window를 강제한다. 창은 _window_viewer 전용 스레드가 대신 그린다
-    # (프레임 전달 통로로 web_state를 재사용하므로 args.web을 켠다 —
-    #  HTTP 서버는 사용자가 --web을 명시한 경우에만 띄운다).
-    local_window = not args.no_window
-    serve_http = args.web
-    args.no_window = True
-    if local_window:
-        args.web = True
-
-    if not Path(args.model).exists():
-        print(f"[ERROR] 모델 없음: {args.model}")
-        sys.exit(1)
-    if args.tilt_min >= args.tilt_max:
-        print("[ERROR] --tilt-min은 --tilt-max보다 작아야 합니다")
-        sys.exit(1)
-    if args.axis in ("pan", "pantilt") and args.pan_min >= args.pan_max:
-        print("[ERROR] --pan-min은 --pan-max보다 작아야 합니다")
-        sys.exit(1)
-    if not 0 < args.rotate_span <= min(lim["pan"]["max"], -lim["pan"]["min"]):
-        print("[ERROR] --rotate-span은 0보다 크고 pan 회전 한계 안이어야 합니다")
-        sys.exit(1)
-    if args.rotate_lead <= 0:
-        print("[ERROR] --rotate-lead는 0보다 커야 합니다")
-        sys.exit(1)
-
-    detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf,
-                                        min_person_score=_TRK["min_person_score"],
-                                        num_threads=args.threads)
-    tracker = PoseTracker()
-
-    web_srv = web_state = viewer_thread = None
-    viewer_stop = threading.Event()
-    if args.web:
-        web_state = _WebStreamState(args.web_quality, args.web_fps)
-        if serve_http:
-            web_srv = _ThreadedHTTP((args.web_host, args.web_port), _make_handler(web_state))
-            threading.Thread(target=web_srv.serve_forever, daemon=True).start()
-            print(f"[web] http://{args.web_host}:{args.web_port}/  (브라우저에서 열기)")
-        if local_window:
-            viewer_thread = threading.Thread(target=_window_viewer,
-                                             args=(web_state, viewer_stop), daemon=True)
-            viewer_thread.start()
-            print("[E2E] 로컬 창 뷰어 시작 (전용 GUI 스레드)")
-
-    motor_cm = open_motor_from_args(args)
-    try:
-        with motor_cm as mc:
-            mc.enable()
-            # 이전 실행이 돌아간 채 꺼졌으면 저장 위치만큼 되돌아와 중앙을 본다.
-            # 첫 실행이면 현재 위치가 0°(각 축)가 된다 — 시작 위치 마커 권장.
-            mc.restore_origin()
-
-            if args.dry_run:
-                fan_cm = _DryRelay()
-            else:
-                # lgpio를 최상단에서 import하는 모듈이라 여기서 지연 import
-                # (개발 PC --dry-run에서 스크립트가 아예 못 뜨는 것 방지).
-                from hardware.relay_controller import FanRelay
-                fan_cm = FanRelay(CFG, handle=mc.h)  # gpiochip 핸들 공유 (docstring 4)
-
-            with fan_cm as fan:  # mc보다 먼저 닫힘 — 공유 핸들이 살아있을 때 전부 오픈
-                track_fn = _make_runner(args.axis, detector, tracker, mc, args, web_state)
-                supervisor = _ModeSupervisor(track_fn, _make_sweeper(mc, args),
-                                             _make_homer(mc, home_pan=False),
-                                             _make_homer(mc, home_pan=True),
-                                             stop_fn=mc.stop,
-                                             web_state=web_state)
-                service = EswFanServiceV2(supervisor, fan)
-
-                print(f"[E2E] axis={args.axis} — BLE 전원/모드/풍량 명령 대기 중.")
-                try:
-                    asyncio.run(_ble_main(service))
-                except KeyboardInterrupt:
-                    print("\n[E2E] Ctrl+C 종료")
-                finally:
-                    fan.set_speed(0)  # 0° 복귀(최대 30s) 동안 팬이 계속 돌지 않게 먼저 정지
-                    supervisor.stop_and_join()
-                    if args.axis in ("tilt", "pantilt"):
-                        # 웜기어(틸트)는 수동 복귀가 어려우므로 종료 시 0°로 되돌린다.
-                        print("[E2E] 0° 복귀 중...")
-                        mc.move_to(0.0, 0.0)
-                        if not mc.wait_until_idle(timeout=30):
-                            print("[E2E] 복귀 미완료 — 물리 위치를 확인하세요.")
-    finally:
-        if web_srv:
-            web_srv.shutdown(); web_srv.server_close()
-        viewer_stop.set()
-        if viewer_thread:
-            viewer_thread.join(timeout=3)  # destroyAllWindows는 뷰어 스레드 몫
-        print("\n[E2E] 종료")
-
-
-if __name__ == "__main__":
-    main()

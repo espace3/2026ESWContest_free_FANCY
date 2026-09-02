@@ -60,11 +60,8 @@
 | 모터 | 스테퍼 2축 (1.8°/step, 200 step/rev) — 팬: 유성기어 1:100, 틸트: 웜기어 1:100 |
 | 드라이버 | TMC2209 ×2 + 아두이노 CNC v3 쉴드 (마이크로스텝 1/16) |
 | 릴레이 | TS0011 4채널 중 3채널 — 기존 선풍기의 220V 풍속 탭을 단속 |
-| 전원 | 24V 5A SMPS (모터부) |
+| 전원 | 24V SMPS(모터), 5V SMPS(릴레이. 레벨컨버터) |
 | 그 외 | 기존 선풍기 본체, 팬틸트 기구부 |
-
-> 틸트는 웜기어라 전원이 꺼져도 헤드가 자중으로 처지지 않습니다(백드라이브 방지).
-> 팬은 회전량이 커서 유성기어를 씁니다.
 
 ### 소프트웨어
 
@@ -73,8 +70,8 @@
 | OS | Raspberry Pi OS Lite 64-bit (Debian trixie) |
 | 언어 | Python 3.11.15 |
 | 추론 | TFLite Runtime + [MoveNet MultiPose Lightning](https://www.kaggle.com/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1) (Google, Apache 2.0 — 17 COCO keypoints, 최대 6인) |
-| 영상 | OpenCV 4.x, rpicam-apps (`rpicam-vid`) |
-| BLE | BlueZ 5.x GATT 서버 — `bluez_peripheral`(pre-release) / `dbus_fast` |
+| 영상 | OpenCV 4.13.0, rpicam-apps (`rpicam-vid`) |
+| BLE | BlueZ 5.82 GATT 서버 — `bluez_peripheral`(pre-release) / `dbus_fast` |
 | GPIO | `lgpio` |
 | 앱 | Flutter (Dart), Android |
 

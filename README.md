@@ -1,5 +1,7 @@
 # AI 스마트 타겟 선풍기
 
+[![시연 영상](https://img.youtube.com/vi/irIeIDBcQD0/maxresdefault.jpg)](https://youtu.be/irIeIDBcQD0)
+
 본 프로젝트는 팀 **FANCY**의 2026 임베디드 소프트웨어 경진대회(자유공모) 출품작입니다.
 
 카메라로 사용자를 실시간 인식·추적해 팬틸트 헤드로 바람 방향을 자동 조준하고,

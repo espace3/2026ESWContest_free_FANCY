@@ -25,7 +25,7 @@
 #   sudo ldconfig
 #
 # 사용법 (Pi에서, verify 스크립트를 돌리는 그 venv를 활성화한 채):
-#   bash hardware/tools/patch_lgpio.sh [소스디렉터리=~/lg-src]
+#   bash tools/patch_lgpio.sh [소스디렉터리=~/lg-src]
 # 재실행해도 안전하다(이미 패치된 소스는 건너뜀). 기록은 $SRC_DIR/patch_install.log.
 set -euo pipefail
 

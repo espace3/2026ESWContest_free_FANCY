@@ -1,5 +1,5 @@
 """
-vision/pose_tracker.py
+vision/region_filter.py
 
 선정된 추적 대상 1인의 부위(머리/상체/하체) 중심 좌표를 시간축으로 안정화 —
 순수 계산 모듈 (하드웨어 import 없음).
@@ -28,7 +28,7 @@ visible=False가 된 뒤에도 cx/cy는 마지막 관측값을 유지한다(참�
 from __future__ import annotations
 
 
-class PoseTracker:
+class RegionFilter:
     REGIONS = ("head", "upper", "lower")
 
     def __init__(self, alpha: float = 0.6, miss_thr: int = 5):

@@ -43,7 +43,7 @@ from control.control_signal_generator import (apply_deadzone, clamp_angle,
                                               compute_pan_angle,
                                               compute_tilt_angle)
 from control.recognition_reporter import RecognitionReporter
-from vision.pose_tracker import PoseTracker
+from vision.region_filter import RegionFilter
 from vision.target_selector import (DEFAULT_MATCH_RADIUS, person_center,
                                     select_target)
 from app.tracking import (_INVISIBLE, _axes_idle, _draw_overlay, chest_point,
@@ -265,9 +265,9 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 else:
                     chest = dict(_INVISIBLE, paired=False)
                     tracker_input = {"detected": False,
-                                     "regions": {k: _INVISIBLE for k in PoseTracker.REGIONS}}
+                                     "regions": {k: _INVISIBLE for k in RegionFilter.REGIONS}}
                 smoothed = tracker.update(tracker_input)
-                fresh = {k: tracker.miss[k] == 0 for k in PoseTracker.REGIONS}
+                fresh = {k: tracker.miss[k] == 0 for k in RegionFilter.REGIONS}
 
                 seen = recognition.update(t0, target_idx is not None)
                 if seen is not None:

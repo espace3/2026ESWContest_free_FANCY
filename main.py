@@ -107,7 +107,7 @@ from config import (CFG, SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
 
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
 from vision.pose_estimator import MoveNetMultiPoseDetector
-from vision.pose_tracker import PoseTracker
+from vision.region_filter import RegionFilter
 from app.tracking import add_state_args, open_motor_from_args, _DryRelay
 from app.camera import (_WebStreamState, _make_handler, _ThreadedHTTP,
                         _window_viewer)
@@ -483,7 +483,7 @@ def main() -> None:
     detector = MoveNetMultiPoseDetector(args.model, conf_thr=args.conf,
                                         min_person_score=_TRK["min_person_score"],
                                         num_threads=args.threads)
-    tracker = PoseTracker()
+    tracker = RegionFilter()
 
     web_srv = web_state = viewer_thread = None
     viewer_stop = threading.Event()

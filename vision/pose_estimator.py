@@ -8,7 +8,7 @@ GPIO/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
 
 이 모듈은 "보이는 사람 전부"를 반환하는 것까지만 책임진다. 그중 추적할 1명을
 고르는 건 target_selector.select_target()의 역할이고, 시간에 따른 스무딩은
-pose_tracker.PoseTracker의 역할이다 (역할 분리).
+region_filter.RegionFilter의 역할이다 (역할 분리).
 
 카메라 캡처, 시각화, 모터/BLE 제어는 이 모듈이 아니라
 app/, control/ 쪽에서 이 모듈의 결과를 가져다 씁니다.

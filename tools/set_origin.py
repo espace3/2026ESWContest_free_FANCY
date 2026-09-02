@@ -1,5 +1,5 @@
 """
-scripts/set_origin.py - 지금 헤드가 향한 곳을 영점(0°)으로 잡는다.
+tools/set_origin.py - 지금 헤드가 향한 곳을 영점(0°)으로 잡는다.
 
 손으로 헤드를 중앙(정면)에 맞춘 뒤 한 번 실행하면 끝이다. 모터는 움직이지 않고,
 현재 위치가 0°라는 사실만 상태 파일(config "motor_state".file)에 기록한다.
@@ -9,7 +9,7 @@ scripts/set_origin.py - 지금 헤드가 향한 곳을 영점(0°)으로 잡는�
   - 재시작하면 기록된 만큼 되돌아와 다시 0°를 본다
 
 실행 (레포 루트에서):
-    python scripts/set_origin.py
+    python tools/set_origin.py
 """
 
 from __future__ import annotations

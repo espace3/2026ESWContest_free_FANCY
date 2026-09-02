@@ -36,7 +36,7 @@ from __future__ import annotations
 
 # "직전 대상자와 같은 사람"으로 인정하는 최대 이동 거리 (정규화 좌표 기준).
 # select_target()의 기본값이자, 호출부가 "대상자가 다른 사람으로 교체됐는지"
-# (→ PoseTracker.reset() 필요 여부) 판단할 때도 같은 기준을 쓰도록 공개해 둔다.
+# (→ RegionFilter.reset() 필요 여부) 판단할 때도 같은 기준을 쓰도록 공개해 둔다.
 DEFAULT_MATCH_RADIUS = 0.2
 
 # 초기 선정 기준점 — 화면 정중앙.

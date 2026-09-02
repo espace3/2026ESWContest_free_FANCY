@@ -1,5 +1,5 @@
 """
-bench/measure_jitter.py - 펄스 스레드 웨이크업 지터 측정 (docs/lgpio_patch.md)
+tools/measure_jitter.py - 펄스 스레드 웨이크업 지터 측정 (docs/lgpio_patch.md)
 
 배선 필요 없음. GPIO도 안 건드린다.
 
@@ -24,14 +24,14 @@ CPU 경합이라 별도 프로세스의 스레드도 똑같이 겪는다).
     python main.py --axis pantilt   # 평소 쓰는 그대로
 
     # 터미널 2 — 그동안 재기
-    python bench/measure_jitter.py --freq 6000 --sec 10
+    python tools/measure_jitter.py --freq 6000 --sec 10
 
 기준선(무부하)을 먼저 떠두고 비교할 것:
 
-    python bench/measure_jitter.py --freq 6000 --sec 10            # 기준선
-    python bench/measure_jitter.py --freq 6000 --sec 10 --load 6   # 합성 부하(추적 대신)
-    sudo chrt -f 10 $(which python3) bench/measure_jitter.py --freq 6000 --sec 10 --load 6
-    python bench/measure_jitter.py --freq 6000 --sec 10 --cpu 3    # 코어 3 전용(어피니티 대책 예습)
+    python tools/measure_jitter.py --freq 6000 --sec 10            # 기준선
+    python tools/measure_jitter.py --freq 6000 --sec 10 --load 6   # 합성 부하(추적 대신)
+    sudo chrt -f 10 $(which python3) tools/measure_jitter.py --freq 6000 --sec 10 --load 6
+    python tools/measure_jitter.py --freq 6000 --sec 10 --cpu 3    # 코어 3 전용(어피니티 대책 예습)
 
 마지막 두 줄이 대책 대조군이다 — 여기서 꼬리가 확 줄면 RT 승격/어피니티가 통한다는
 뜻이고, 그때 비로소 motor_controller에 손대면 된다. 이 스크립트 자체는 계산을 안

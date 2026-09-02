@@ -55,7 +55,7 @@ motor_controller.py 본구현(논블로킹) 이후 남은 결정·검증 사항.
       (두 축 모두 자기잠금이라 disable 중에도 위치는 유지된다).
 - [x] **같은 방향 연장 이동 최적화** (2026-07-30 구현): 같은 방향이고 감속 여유가
       남는 새 목표는 감속 없이 갈아타고, 남은 거리가 늘면 램프도 더 오른다.
-      실기 검증 잔여 — bench/drive_motor.py --preempt(역방향은 여전히 감속 경로 확인),
+      실기 검증 잔여 — tools/drive_motor.py --preempt(역방향은 여전히 감속 경로 확인),
       --track-sim(20Hz 목표 갱신에서 순항 도달·최종 장부 일치), 순항 체류 증가에
       따른 조용한 탈조 감시(종료 시 0° 복귀 ↔ 시작 마커, lgpio_patch.md 잔여 위험).
 
@@ -68,7 +68,7 @@ motor_controller.py 본구현(논블로킹) 이후 남은 결정·검증 사항.
       모두 이 스레드가 죽어 큐가 안 빠진 결과였다 (원인이 아니라 증상).
       **확정 근거 (2026-08-26)**: 정지 상태에서 `top -H`에 `PR=-11`(SCHED_FIFO 10) 스레드가
       `R` 상태 99.9% — 그 우선순위를 받는 건 `open_chip()`이 승격한 lgpio 스레드 2개뿐이다.
-      **대책**: `hardware/tools/patch_lgpio.sh` (음수 클램프 + EINTR만 재시도).
+      **대책**: `tools/patch_lgpio.sh` (음수 클램프 + EINTR만 재시도).
       ⚠ 2026-08-25 1차 설치는 **무효였다** — trixie의 ld.so 검색 순서 때문에 구본
       (`/usr/lib/aarch64-linux-gnu/liblgpio.so.1`)이 이겼다. 커밋 9569cda가
       `/usr/local/lib/aarch64-linux-gnu/`에도 설치하도록 고쳤고, 2026-08-26 재설치 후

@@ -2,7 +2,7 @@
 app/camera.py - 카메라 백엔드 · 포즈 시각화 · MJPEG 웹스트림
 
 이 파일은 계산 로직을 포함하지 않습니다. 실제 추정/선정/추적 로직은
-vision/pose_estimator.py, vision/target_selector.py, vision/pose_tracker.py에
+vision/pose_estimator.py, vision/target_selector.py, vision/region_filter.py에
 있고, 여기서는 카메라를 열어 그 결과를 화면/웹에 보여주기만 합니다
 (하드웨어 캡처 + 시각화). 같은 vision 모듈을 app/main.py(실제 구동 코드)에서도
 그대로 가져다 씁니다.
@@ -38,7 +38,7 @@ from config import CFG
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
 from vision.pose_estimator import MoveNetMultiPoseDetector, KP_NAMES, SKELETON
 from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
-from vision.pose_tracker import PoseTracker
+from vision.region_filter import RegionFilter
 
 # ── 색상 ─────────────────────────────────────────────────────────────────────
 C_GREEN = (0, 200, 60)
@@ -578,7 +578,7 @@ def main():
                              " (IR 파장대 고유 재질 반사율 차이는 재현 불가 — 근사치일 뿐)")
     args = parser.parse_args()
 
-    tracker = PoseTracker()
+    tracker = RegionFilter()
 
     if not Path(args.model).exists():
         print(f"[ERROR] 모델 없음: {args.model}")

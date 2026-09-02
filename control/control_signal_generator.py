@@ -45,7 +45,7 @@ def apply_deadzone(new_angle_deg: float, last_sent_angle_deg: float, deadzone_de
 
     포즈 추정 잡음으로 목표 지점이 미세하게 계속 흔들려도(사람은 정지 상태),
     이 함수를 거친 뒤의 값을 모터에 보내면 오차가 임계값을 넘을 때만 실제로
-    움직인다. PoseTracker의 EMA는 좌표 추정 자체를 부드럽게 만드는 역할이고,
+    움직인다. RegionFilter의 EMA는 좌표 추정 자체를 부드럽게 만드는 역할이고,
     이 데드존은 '그 부드러운 값도 여전히 미세하게 흔들릴 때 모터까지 그 흔들림이
     전달되지 않게' 마지막 단계에서 한 번 더 걸러주는 역할이다.
 

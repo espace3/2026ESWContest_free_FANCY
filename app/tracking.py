@@ -222,7 +222,7 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
     나온다. 그래서 팬·팬틸트는 가슴(어깨 중점) 고정이다.
     """
     from vision.target_selector import select_target, person_center, DEFAULT_MATCH_RADIUS
-    from vision.pose_tracker import PoseTracker
+    from vision.region_filter import RegionFilter
     from control.control_signal_generator import (apply_deadzone, clamp_angle,
                                                   compute_pan_angle, compute_tilt_angle)
     from app.camera import _read_frame, draw_pose
@@ -271,7 +271,7 @@ def run_tracking(cam, backend, detector, tracker, mc, args, stop_event, *,
             tracker_input = {"detected": True, "regions": regions}
         else:
             tracker_input = {"detected": False,
-                             "regions": {k: _INVISIBLE for k in PoseTracker.REGIONS}}
+                             "regions": {k: _INVISIBLE for k in RegionFilter.REGIONS}}
 
         aim = tracker.update(tracker_input)[aim_key]
 

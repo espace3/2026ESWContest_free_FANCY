@@ -1,5 +1,5 @@
 """
-bench/drive_motor.py - 팬틸트 모터 단독 구동 (각도 캘리브레이션 · 펄스 타이밍 실측)
+tools/drive_motor.py - 팬틸트 모터 단독 구동 (각도 캘리브레이션 · 펄스 타이밍 실측)
 
 계산 로직 없음. hardware/motor_controller.py의 MotorController(논블로킹)에 이동
 명령을 보내고 결과(소요 시간·최종 장부 위치)를 출력만 한다. 정확도 판정은 축에
@@ -10,17 +10,17 @@ docs/angle_calibration.md, 펄스 타이밍(--timing)의 배경은 docs/lgpio_pa
 
 
 실행 (RPi 5, 레포 루트에서):
-    python bench/drive_motor.py --axis pan --deg 90       # 단발 이동 (기본 90°)
-    python bench/drive_motor.py --axis pan --sweep 90 --cycles 5
+    python tools/drive_motor.py --axis pan --deg 90       # 단발 이동 (기본 90°)
+    python tools/drive_motor.py --axis pan --sweep 90 --cycles 5
         # ±90° 왕복 5회 후 0° 복귀 — 시작 마커와의 어긋남이 누적 오차 (<2° 목표)
-    python bench/drive_motor.py --axis tilt --speed
+    python tools/drive_motor.py --axis tilt --speed
         # 최고 속도 실측, 90° 이동 (gear_ratio=92.6 반영 후 이론상 ≈12.15°/s)
-    python bench/drive_motor.py --axis pan --preempt
+    python tools/drive_motor.py --axis pan --preempt
         # 이동 중 목표 갈아타기: pan +720°(tilt +90°) 출발 → 도중 0°로 선점.
         # 감속→반전이 부드러운지, 최종이 시작 마커(0°)로 돌아오는지 확인
-    python bench/drive_motor.py --axis pan --short
+    python tools/drive_motor.py --axis pan --short
         # 짧은 이동 한계 실측 — 1/5/10/20/50스텝 단발 (docs/hardware_todo.md 항목)
-    python bench/drive_motor.py --axis pan --track-sim 10
+    python tools/drive_motor.py --axis pan --track-sim 10
         # 20Hz 랜덤 잔이동 10초 — 실전 추적 근사 (논블로킹 동작 확인)
 """
 

@@ -160,6 +160,7 @@ hardware/                 하드웨어 호출 전용 — 계산 결과를 GPIO�
 main.py                   진입점 — BLE 서비스 + 부위 모드 러너 + 전체 상태기계
 app/                      진입점이 쓰는 실행 모듈 (아래 표 참고)
 scripts/set_origin.py     최초 1회 영점 설정
+bench/                    실측·캘리브레이션 도구 (운용에는 불필요, 아래 표 참고)
 docs/                     프로토콜·알고리즘·실측 문서 (아래 표 참고)
 ```
 
@@ -167,12 +168,9 @@ docs/                     프로토콜·알고리즘·실측 문서 (아래 표 
 
 ## 실행 파일 구성
 
-동작에 **실제로 필요한 파일만** 두었습니다. 개발 과정에서 단계별로 쓴 단독 검증
-스크립트(모터 단독 구동, 축별 추적, 릴레이 극성 확인, 펄스 지터 계측 등)는 실행에
-필요하지 않아 제외했습니다 — `main` 브랜치에 그대로 있습니다.
-
-> 이 브랜치(`submission`)에는 실행에 필요한 파일만 있습니다. 단계별 검증 스크립트를
-> 포함한 전체 개발 이력은 `main` 브랜치에 있습니다.
+**운용에 필요한 것**과 **`docs/`의 실험 절차를 실행하는 데 필요한 것**만 두었습니다.
+개발 과정에서 기능 단위로 쓴 단독 검증 스크립트(축별 추적, 릴레이 극성 확인, BLE
+연동 등)는 그 기능이 `main.py`로 흡수되어 제외했습니다 — `main` 브랜치에 있습니다.
 
 ```
 main.py                 ← 진입점. BLE 서비스, 부위 모드 러너, 전체 상태기계
@@ -183,6 +181,10 @@ app/
  └── camera.py             카메라 백엔드 3종(picamera2 / rpicam-vid / OpenCV),
                            MJPEG 웹스트림, 포즈 시각화, cv2 창 스레드
 scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
+bench/                  실측·캘리브레이션 도구 — 운용에는 안 쓰지만 docs/의 실험
+ ├── motor_drive.py        절차가 이 도구들을 씁니다. 각도가 틀어지거나 모터 소음이
+ ├── pulse_jitter.py       재발하면 문서의 순서대로 이것들로 좁힙니다.
+ └── enable_hold.py
 ```
 
 | 파일 | 역할 |
@@ -193,6 +195,12 @@ scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
 | `app/camera.py` | 카메라 캡처 백엔드·재시도 오픈, MJPEG 웹스트림, 포즈 시각화, cv2 창 스레드 |
 | `config.py` | 튜닝값 전부 + BLE 프로토콜 상수(UUID·모드·풍량 — 앱과 공유하는 계약) |
 | `scripts/set_origin.py` | 최초 1회 영점 설정 — [설치](#설치) 5번 |
+
+| 실측 도구 (`bench/`) | 무엇을 재나 | 관련 문서 |
+|---|---|---|
+| `motor_drive.py` | 모터 단독 구동 — 각도 누적 오차, 백래시, 짧은 이동 한계, 펄스 타이밍(`--timing`) | [`angle_calibration.md`](docs/angle_calibration.md) · [`lgpio_patch.md`](docs/lgpio_patch.md) |
+| `pulse_jitter.py` | 펄스 스레드 웨이크업 지터 (모터·배선 불필요) | [`lgpio_patch.md`](docs/lgpio_patch.md) · [`pulse_jitter.md`](docs/measurements/pulse_jitter.md) |
+| `enable_hold.py` | EN을 켠 채 대기 — 기어 유격(백래시) 손측정용 | [`angle_calibration.md`](docs/angle_calibration.md) |
 
 `app/`의 모듈들은 개발 과정에서 기능 단위로 쓴 **독립 실행 검증 스크립트**(포즈 추정,
 축별 추적, BLE 연동, 릴레이 연동)로 시작해, 기능이 확정되면서 상위 단계가 import해 쓰는

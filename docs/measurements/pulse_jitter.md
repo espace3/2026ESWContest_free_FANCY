@@ -1,11 +1,6 @@
 # 측정 기록 — 스테퍼 펄스 스레드 웨이크업 지터
 
-> **참고**: 이 문서가 언급하는 계측·단독 검증 스크립트(`verify_motor.py`,
-> `verify_track_*.py`, `verify_pulse_jitter.py`, `hold_enable.py` 등)는 실행에 필요하지
-> 않아 **제출본에 포함되어 있지 않습니다.** 개발 브랜치(`main`)에 있으며, 재측정이
-> 필요할 때 가져와 쓰면 됩니다.
-
-`scripts/verify_pulse_jitter.py` 실측 원본. 배경·가설 배제 과정·채택한 대책은
+`bench/pulse_jitter.py` 실측 원본. 배경·가설 배제 과정·채택한 대책은
 [`../lgpio_patch.md`](../lgpio_patch.md)에 있고, 이 문서는 **그 판단의 근거가 된 숫자**만 남긴다.
 
 - 대상: Raspberry Pi 5 / Raspberry Pi OS Lite 64-bit / Python 3.11.15
@@ -46,10 +41,10 @@
 ## 재현
 
 ```bash
-python3 scripts/verify_pulse_jitter.py --freq 6000 --sec 10                  # 부하 없음
-python3 scripts/verify_pulse_jitter.py --freq 6000 --sec 10 --load 6         # 부하 6개
-sudo chrt -f 10 $(which python3) scripts/verify_pulse_jitter.py --freq 6000 --sec 10 --load 6
-python3 scripts/verify_pulse_jitter.py --freq 6000 --sec 10 --cpu 3          # 코어 고정
+python3 bench/pulse_jitter.py --freq 6000 --sec 10                  # 부하 없음
+python3 bench/pulse_jitter.py --freq 6000 --sec 10 --load 6         # 부하 6개
+sudo chrt -f 10 $(which python3) bench/pulse_jitter.py --freq 6000 --sec 10 --load 6
+python3 bench/pulse_jitter.py --freq 6000 --sec 10 --cpu 3          # 코어 고정
 ```
 
 ⚠ 위 `chrt -f`는 **측정 전용**이다. 추적 스크립트 전체를 RT로 올리면 TFLite의 CPU 바운드

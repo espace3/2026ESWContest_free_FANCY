@@ -1,16 +1,11 @@
 # lgpio 펄스 타이밍 — 부하 시 지터/탈조 문제
 
-> **참고**: 이 문서가 언급하는 계측·단독 검증 스크립트(`verify_motor.py`,
-> `verify_track_*.py`, `verify_pulse_jitter.py`, `hold_enable.py` 등)는 실행에 필요하지
-> 않아 **제출본에 포함되어 있지 않습니다.** 개발 브랜치(`main`)에 있으며, 재측정이
-> 필요할 때 가져와 쓰면 됩니다.
-
 **상태: 해결 (2026-08-07). 대책은 `hardware/motor_controller.py`의 `open_chip()` 안에 있다.**
 
 Pi 5에서 스테퍼 펄스를 lgpio로 만들 때 생기는 타이밍 문제를 한 곳에 모아둔 문서.
 `docs/hardware_todo.md`의 "tilt f_max 실효값 확정" 항목이 여기를 참조한다.
 
-> ⚠ 이 파일은 원래 2026-07-16에 작성됐다가 유실됐고(레포에 없는 채로 TODO.md에서만
+> ⚠ 이 파일은 원래 2026-07-16에 작성됐다가 유실됐고(레포에 없는 채로 하드웨어 TODO에서만
 > 참조되고 있었다), 2026-08-07에 재작성됐다. 당시 "적용했다"던 RT 패치는 절차도
 > 유실됐고 실행 환경(pyenv venv)에서 무효였다. **그 전철을 밟지 않으려고 이번 대책은
 > 문서가 아니라 코드 안에 넣었다** — venv를 새로 만들어도, 이 문서를 못 찾아도 따라온다.
@@ -33,7 +28,7 @@ Pi 5는 pigpio(DMA 기반 하드웨어 타이밍)를 쓸 수 없어 lgpio만 선
 - **2026-07-16** — 부하 시 "펄스 몰림 → 탈조" 관측. 대응으로 tilt `f_max`를
   10000 → 6000으로 잠정 하향 (config.py `stepper.tilt.f_max`). 원인 문서(이 파일)와
   패치 절차를 작성했으나 유실.
-- **2026-07-24** — "lgpio RT 우선순위 패치 적용됨(문서 절차 3)"이라고 TODO.md에 기록.
+- **2026-07-24** — "lgpio RT 우선순위 패치 적용됨(문서 절차 3)"이라고 하드웨어 TODO에 기록.
   **아래 2026-08-07 확인에 따르면 현재 실행 환경에서는 무효다.**
 - **2026-08-07** — 추적 중 달그락 소음의 원인을 CPU 경쟁으로 확정 (아래).
 
@@ -41,8 +36,8 @@ Pi 5는 pigpio(DMA 기반 하드웨어 타이밍)를 쓸 수 없어 lgpio만 선
 
 ### 증상
 
-카메라 추적(`verify_track_*`, `main.py`)을 돌리면 모터에서
-달그락거리는 소리가 난다. `verify_motor.py` 단독 구동은 어떤 조건(긴 이동/왕복/잔이동/
+카메라 추적(`main.py`)을 돌리면 모터에서
+달그락거리는 소리가 난다. `bench/motor_drive.py` 단독 구동은 어떤 조건(긴 이동/왕복/잔이동/
 넓은 범위)에서도 조용하다. 소리는 **모터가 실제로 도는 동안에만** 난다.
 
 ### 원인
@@ -54,7 +49,7 @@ lgpio의 펄스 생성 스레드가 일반 우선순위(SCHED_OTHER)로 돌아�
 
 | 조건 | 결과 |
 |---|---|
-| busy loop 3개(코어 1개 여유) + `verify_motor --sweep 60 --cycles 3` | 조용 |
+| busy loop 3개(코어 1개 여유) + `motor_drive --sweep 60 --cycles 3` | 조용 |
 | busy loop 6개(코어 초과 구독) + 같은 명령 | **소리** |
 | busy loop 6개 + `sudo chrt -f 10 $(which python3) …`로 같은 명령 | **조용** ← 확정 |
 | 추적 중 `--threads 3 → 1` | 소리 줄어듦 |
@@ -85,7 +80,7 @@ $ python3 -c "import lgpio; print(lgpio.__file__)"
 |---|---|---|
 | 데드존/게인이 만드는 정지→기동 반복 | `--deadzone-pan 0.3 --gain-pan 0.2` | 무관 (그대로) |
 | 큐 언더런 (`_LOOKAHEAD_S` 부족) | 0.09 → 0.25 → 1.0 | **무관.** 1초 버퍼도 안 통함 = 큐가 비는 게 아니라 개별 펄스 간격이 흔들리는 것. 버퍼로는 못 고친다 |
-| 두 축 동시 구동 (tx_pwm 2핀 경합) | 단일 축(`verify_track_pan`)에서도 발생 | 무관 |
+| 두 축 동시 구동 (tx_pwm 2핀 경합) | 단일 축 추적에서도 발생 | 무관 |
 | Camera Module 3 오토포커스(VCM) 소음 | 소리 발생원이 모터임을 직접 확인 | 무관 |
 | 팬 기어비 오차 | 360° 명령에 오차 3°, 1080°에서도 안 커짐 | 무관 (회전량에 비례하지 않음 = 백래시) |
 | 이동 패턴 (잔이동 vs 긴 이동) | `--track-sim`, `--sweep` 모두 무부하에서 조용 | 무관 |
@@ -107,17 +102,17 @@ $ python3 -c "import lgpio; print(lgpio.__file__)"
     언더런  = 앞 청크가 다 나간 뒤에야 다음 청크를 넣은 횟수 (= 펄스가 실제로 끊김)
 
 ```bash
-python scripts/verify_motor.py --sweep 60 --cycles 3 --timing   # 부하 없는 기준선
-python scripts/verify_track_pantilt.py --threads 3 --timing     # 소리 나는 그 조건
-python scripts/verify_track_pantilt.py --threads 3 --timing --no-rt --no-pin  # 대책 끄고 비교
+python bench/motor_drive.py --sweep 60 --cycles 3 --timing   # 부하 없는 기준선
+python main.py --axis pantilt --timing     # 소리 나는 그 조건
+python main.py --axis pantilt --timing --no-rt --no-pin  # 대책 끄고 비교
 ```
 
-**② 대리 측정 — `scripts/verify_pulse_jitter.py`.** 모터·배선 없이 "스레드가 예정보다
+**② 대리 측정 — `bench/pulse_jitter.py`.** 모터·배선 없이 "스레드가 예정보다
 얼마나 늦게 깨는가"만 잰다. 대책 후보를 코드에 넣기 전에 A/B 하는 용도.
 
 ## 실측값 (2026-08-07, Pi 5 4코어, f_max 6000 → 에지 간격 T=83.3us)
 
-`verify_pulse_jitter.py`, 부하는 busy loop 6개. "초과분"은 바닥(sleep 오버헤드)을 뺀 값:
+`bench/pulse_jitter.py`, 부하는 busy loop 6개. "초과분"은 바닥(sleep 오버헤드)을 뺀 값:
 
 | 조건 | 바닥 | p90 | p99 | max | T 초과 |
 |---|---|---|---|---|---|
@@ -177,7 +172,7 @@ python scripts/verify_track_pantilt.py --threads 3 --timing --no-rt --no-pin  # 
 
 ```bash
 ps -eLo pid,tid,cls,rtprio,psr,comm | awk 'NR==1 || $3!="TS"'   # RT 스레드만
-ps -L -o psr= -p $(pgrep -f verify_track_pantilt) | sort | uniq -c  # 코어 분포
+ps -L -o psr= -p $(pgrep -f main.py) | sort | uniq -c  # 코어 분포
 ```
 
 **FF가 정확히 2개**여야 한다. 5개 이상이면 ③ 복구가 실패한 것이다(워커·저장까지 RT).
@@ -187,7 +182,7 @@ ps -L -o psr= -p $(pgrep -f verify_track_pantilt) | sort | uniq -c  # 코어 분
 추적 스크립트 **전체**를 `chrt -f`로 실행하지 말 것. TFLite의 CPU 바운드 스레드가 RT로
 돌면 커널 작업까지 밀어내 Pi가 멈출 수 있다. RT는 **계산을 하지 않는 펄스 스레드에만**
 줘야 한다 — 위 ③이 그것을 보장한다. 실험에서 `chrt`를 쓴 것은 스레드가 적고 CPU를 안
-먹는 `verify_motor.py`/`verify_pulse_jitter.py` 단독이었기 때문에 안전했다.
+먹는 `bench/motor_drive.py`/`bench/pulse_jitter.py` 단독이었기 때문에 안전했다.
 
 ## 채택하지 않은 대안 (되살릴 필요가 생기면)
 
@@ -205,6 +200,6 @@ ps -L -o psr= -p $(pgrep -f verify_track_pantilt) | sort | uniq -c  # 코어 분
   숫자가 그때의 비교 기준이다.
 - **`f_max` 6000 → 10000 복원 검토**: 2026-07-16 하향의 전제(탈조)가 사라졌는지
   부하 조건에서 재실측할 것. 판정 기준은 **언더런 0 유지**. 틸트 속도 부족 문제가 같이
-  풀릴 수 있다 (TODO.md).
+  풀릴 수 있다 (docs/hardware_todo.md).
 - 그래도 부족하면 부팅 옵션 `isolcpus=3 irqaffinity=0-2` (코드 0줄, 재부팅 필요).
   어피니티는 우리 프로세스의 스레드만 통제하고 커널 스레드·IRQ는 못 옮긴다.

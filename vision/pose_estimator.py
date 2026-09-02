@@ -11,7 +11,7 @@ GPIO/BlueZ 등 하드웨어 라이브러리를 import하지 않습니다.
 pose_tracker.PoseTracker의 역할이다 (역할 분리).
 
 카메라 캡처, 시각화, 모터/BLE 제어는 이 모듈이 아니라
-scripts/, hardware/ 쪽에서 이 모듈의 결과를 가져다 씁니다.
+app/, control/ 쪽에서 이 모듈의 결과를 가져다 씁니다.
 """
 
 from __future__ import annotations

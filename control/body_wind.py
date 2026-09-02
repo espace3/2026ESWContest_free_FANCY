@@ -321,11 +321,22 @@ class BodyPatrolScenario(FullBodyScenario):
         r = obs["regions"].get(region)
         if obs["idle"] and obs["fresh"].get(region) and r and r["visible"]:
             bias = self.aim_ratio.get(region, 0.0) * self.gap_deg
-            self._aim_hold = self._ct(cur_tilt + self._tilt_err(r["cy"]) - bias)
-            return self._aim_hold
+            aim = self._ct(cur_tilt + self._tilt_err(r["cy"]) - bias)
+            if self._aim_hold is None:
+                self.events.append(
+                    f"[aim] {region} 관측 cy={r['cy']:.2f} 편향{bias:+.1f}° "
+                    f"장부{cur_tilt:+.1f}° → 조준{aim:+.1f}°")
+            self._aim_hold = aim
+            return aim
         if self._aim_hold is not None:
             return self._aim_hold
-        return self.aims().get(region, cur_tilt)
+        src = self.aims().get(region, cur_tilt)
+        if self._aim_hold is None:
+            self.events.append(
+                f"[aim] {region} 미관측(idle={obs['idle']!s:5} "
+                f"fresh={obs['fresh'].get(region)!s:5}) → 웨이포인트 조준{src:+.1f}°")
+            self._aim_hold = src
+        return src
 
     def step(self, obs: dict):
         if self.state == "patrol":

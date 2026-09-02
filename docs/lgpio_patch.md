@@ -37,7 +37,7 @@ Pi 5는 pigpio(DMA 기반 하드웨어 타이밍)를 쓸 수 없어 lgpio만 선
 ### 증상
 
 카메라 추적(`main.py`)을 돌리면 모터에서
-달그락거리는 소리가 난다. `bench/motor_drive.py` 단독 구동은 어떤 조건(긴 이동/왕복/잔이동/
+달그락거리는 소리가 난다. `bench/drive_motor.py` 단독 구동은 어떤 조건(긴 이동/왕복/잔이동/
 넓은 범위)에서도 조용하다. 소리는 **모터가 실제로 도는 동안에만** 난다.
 
 ### 원인
@@ -49,7 +49,7 @@ lgpio의 펄스 생성 스레드가 일반 우선순위(SCHED_OTHER)로 돌아�
 
 | 조건 | 결과 |
 |---|---|
-| busy loop 3개(코어 1개 여유) + `motor_drive --sweep 60 --cycles 3` | 조용 |
+| busy loop 3개(코어 1개 여유) + `drive_motor --sweep 60 --cycles 3` | 조용 |
 | busy loop 6개(코어 초과 구독) + 같은 명령 | **소리** |
 | busy loop 6개 + `sudo chrt -f 10 $(which python3) …`로 같은 명령 | **조용** ← 확정 |
 | 추적 중 `--threads 3 → 1` | 소리 줄어듦 |
@@ -102,17 +102,17 @@ $ python3 -c "import lgpio; print(lgpio.__file__)"
     언더런  = 앞 청크가 다 나간 뒤에야 다음 청크를 넣은 횟수 (= 펄스가 실제로 끊김)
 
 ```bash
-python bench/motor_drive.py --sweep 60 --cycles 3 --timing   # 부하 없는 기준선
+python bench/drive_motor.py --sweep 60 --cycles 3 --timing   # 부하 없는 기준선
 python main.py --axis pantilt --timing     # 소리 나는 그 조건
 python main.py --axis pantilt --timing --no-rt --no-pin  # 대책 끄고 비교
 ```
 
-**② 대리 측정 — `bench/pulse_jitter.py`.** 모터·배선 없이 "스레드가 예정보다
+**② 대리 측정 — `bench/measure_jitter.py`.** 모터·배선 없이 "스레드가 예정보다
 얼마나 늦게 깨는가"만 잰다. 대책 후보를 코드에 넣기 전에 A/B 하는 용도.
 
 ## 실측값 (2026-08-07, Pi 5 4코어, f_max 6000 → 에지 간격 T=83.3us)
 
-`bench/pulse_jitter.py`, 부하는 busy loop 6개. "초과분"은 바닥(sleep 오버헤드)을 뺀 값:
+`bench/measure_jitter.py`, 부하는 busy loop 6개. "초과분"은 바닥(sleep 오버헤드)을 뺀 값:
 
 | 조건 | 바닥 | p90 | p99 | max | T 초과 |
 |---|---|---|---|---|---|
@@ -182,7 +182,7 @@ ps -L -o psr= -p $(pgrep -f main.py) | sort | uniq -c  # 코어 분포
 추적 스크립트 **전체**를 `chrt -f`로 실행하지 말 것. TFLite의 CPU 바운드 스레드가 RT로
 돌면 커널 작업까지 밀어내 Pi가 멈출 수 있다. RT는 **계산을 하지 않는 펄스 스레드에만**
 줘야 한다 — 위 ③이 그것을 보장한다. 실험에서 `chrt`를 쓴 것은 스레드가 적고 CPU를 안
-먹는 `bench/motor_drive.py`/`bench/pulse_jitter.py` 단독이었기 때문에 안전했다.
+먹는 `bench/drive_motor.py`/`bench/measure_jitter.py` 단독이었기 때문에 안전했다.
 
 ## 채택하지 않은 대안 (되살릴 필요가 생기면)
 

@@ -74,7 +74,7 @@
 헤드를 손으로 0° 마커에 맞춘 뒤:
 
 ```bash
-python bench/motor_drive.py --axis pan --deg 0     # 시작 시 home()으로 장부 0 확정
+python bench/drive_motor.py --axis pan --deg 0     # 시작 시 home()으로 장부 0 확정
 ```
 
 ### 실험 A — 스케일 (기어비)
@@ -82,9 +82,9 @@ python bench/motor_drive.py --axis pan --deg 0     # 시작 시 home()으로 장
 **같은 방향으로만** 크게 돌린다. 되돌아오는 이동에서 측정하면 백래시가 섞인다.
 
 ```bash
-python bench/motor_drive.py --axis pan --deg 360    # 읽고 기록, 0으로 되돌리지 말고
-python bench/motor_drive.py --axis pan --deg 720    # 이어서 (누적 720)
-python bench/motor_drive.py --axis pan --deg 1080   # 이어서 (누적 1080)
+python bench/drive_motor.py --axis pan --deg 360    # 읽고 기록, 0으로 되돌리지 말고
+python bench/drive_motor.py --axis pan --deg 720    # 이어서 (누적 720)
+python bench/drive_motor.py --axis pan --deg 1080   # 이어서 (누적 1080)
 ```
 
 각 지점에서 **물리 각도 − 명령 각도**를 기록한다.
@@ -103,7 +103,7 @@ gear_ratio_new = gear_ratio_old × (명령각 / 실측각)
 예: `gear_ratio` 100으로 1080° 명령에 1069°만 돌았다면 → `100 × 1080/1069 = 101.03`.
 
 > 팬은 소프트 리밋 ±100°(config `limits`)에 걸리므로, 이 실험은 리밋을 임시로 넓히거나
-> `bench/motor_drive.py`처럼 clamp를 거치지 않는 경로로 해야 한다. **조립 후에는 배선이
+> `bench/drive_motor.py`처럼 clamp를 거치지 않는 경로로 해야 한다. **조립 후에는 배선이
 > 꼬이므로 프레임 간섭을 눈으로 확인하며 돌릴 것.**
 >
 > 틸트는 ±15°라 큰 각도를 못 돈다. `gear_ratio` 92.6은 **팬 헤드를 떼고 벤치에서** 잰
@@ -116,12 +116,12 @@ gear_ratio_new = gear_ratio_old × (명령각 / 실측각)
 
 ```bash
 # + 방향에서 접근
-python bench/motor_drive.py --axis tilt --deg -10   # 여유 있게 아래로
-python bench/motor_drive.py --axis tilt --deg 0     # 위로 올라와 0°에서 정지 → 위치 읽기
+python bench/drive_motor.py --axis tilt --deg -10   # 여유 있게 아래로
+python bench/drive_motor.py --axis tilt --deg 0     # 위로 올라와 0°에서 정지 → 위치 읽기
 
 # - 방향에서 접근
-python bench/motor_drive.py --axis tilt --deg 10    # 여유 있게 위로
-python bench/motor_drive.py --axis tilt --deg 0     # 내려와 0°에서 정지 → 위치 읽기
+python bench/drive_motor.py --axis tilt --deg 10    # 여유 있게 위로
+python bench/drive_motor.py --axis tilt --deg 0     # 내려와 0°에서 정지 → 위치 읽기
 ```
 
 **두 위치의 차이 = 백래시.** 여러 각도(0°, ±5°, ±10°)에서 3회씩 반복해 평균과 산포를
@@ -138,7 +138,7 @@ python bench/motor_drive.py --axis tilt --deg 0     # 내려와 0°에서 정지
 ### 실험 C — 반복성 (탈조)
 
 ```bash
-python bench/motor_drive.py --axis pan --sweep 60 --cycles 10 --timing
+python bench/drive_motor.py --axis pan --sweep 60 --cycles 10 --timing
 ```
 
 끝난 뒤 0° 복귀 위치를 시작 마커와 대조한다.

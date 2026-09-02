@@ -182,8 +182,8 @@ app/
                            MJPEG 웹스트림, 포즈 시각화, cv2 창 스레드
 scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
 bench/                  실측·캘리브레이션 도구 — 운용에는 안 쓰지만 docs/의 실험
- ├── motor_drive.py        절차가 이 도구들을 씁니다. 각도가 틀어지거나 모터 소음이
- ├── pulse_jitter.py       재발하면 문서의 순서대로 이것들로 좁힙니다.
+ ├── drive_motor.py        절차가 이 도구들을 씁니다. 각도가 틀어지거나 모터 소음이
+ ├── measure_jitter.py       재발하면 문서의 순서대로 이것들로 좁힙니다.
  └── enable_hold.py
 ```
 
@@ -198,8 +198,8 @@ bench/                  실측·캘리브레이션 도구 — 운용에는 안 �
 
 | 실측 도구 (`bench/`) | 무엇을 재나 | 관련 문서 |
 |---|---|---|
-| `motor_drive.py` | 모터 단독 구동 — 각도 누적 오차, 백래시, 짧은 이동 한계, 펄스 타이밍(`--timing`) | [`angle_calibration.md`](docs/angle_calibration.md) · [`lgpio_patch.md`](docs/lgpio_patch.md) |
-| `pulse_jitter.py` | 펄스 스레드 웨이크업 지터 (모터·배선 불필요) | [`lgpio_patch.md`](docs/lgpio_patch.md) · [`pulse_jitter.md`](docs/measurements/pulse_jitter.md) |
+| `drive_motor.py` | 모터 단독 구동 — 각도 누적 오차, 백래시, 짧은 이동 한계, 펄스 타이밍(`--timing`) | [`angle_calibration.md`](docs/angle_calibration.md) · [`lgpio_patch.md`](docs/lgpio_patch.md) |
+| `measure_jitter.py` | 펄스 스레드 웨이크업 지터 (모터·배선 불필요) | [`lgpio_patch.md`](docs/lgpio_patch.md) · [`pulse_jitter.md`](docs/measurements/pulse_jitter.md) |
 | `enable_hold.py` | EN을 켠 채 대기 — 기어 유격(백래시) 손측정용 | [`angle_calibration.md`](docs/angle_calibration.md) |
 
 `app/`의 모듈들은 개발 과정에서 기능 단위로 쓴 **독립 실행 검증 스크립트**(포즈 추정,

@@ -206,7 +206,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         cam, backend = _open_cam_retry(args)
         scenario = BodyPatrolScenario(
             fov_h, fov_v, args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
-            gain=gain_pan, gain_tilt=gain_tilt,
+            gain_pan=gain_pan, gain_tilt=gain_tilt,
             invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
             target_cx=args.target_cx, target_cy=args.target_cy,
             dwell_s=args.body_dwell,

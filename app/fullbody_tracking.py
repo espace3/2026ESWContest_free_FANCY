@@ -325,7 +325,7 @@ def main() -> None:
     scenario = FullBodyScenario(
         _fov["h"], _fov["v"],
         args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
-        gain=args.gain_pan, gain_tilt=args.gain_tilt,
+        gain_pan=args.gain_pan, gain_tilt=args.gain_tilt,
         invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
         target_cx=args.target_cx, target_cy=args.target_cy,
         converge_deg=args.converge, converge_frames=args.converge_frames,

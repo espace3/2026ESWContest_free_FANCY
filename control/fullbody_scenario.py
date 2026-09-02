@@ -69,8 +69,10 @@ class FullBodyScenario:
         fov_v_deg: float,
         pan_min: float, pan_max: float,
         tilt_min: float, tilt_max: float,
-        gain: float = 0.3,
-        gain_tilt: float = 0.25,
+        # 기본값을 두지 않는다 — 값의 출처는 config "tracking" 하나뿐이고,
+        # 여기 사본을 남기면 config를 고쳐도 조용히 옛 숫자가 쓰인다.
+        gain_pan: float,
+        gain_tilt: float,
         invert_pan: bool = False,
         invert_tilt: bool = False,
         # 조준점(정규화 화면 좌표). 0.5, 0.5 가 화면 정중앙이다. 카메라 렌즈와
@@ -95,7 +97,7 @@ class FullBodyScenario:
         self.fov_h, self.fov_v = fov_h_deg, fov_v_deg
         self.pan_min, self.pan_max = pan_min, pan_max
         self.tilt_min, self.tilt_max = tilt_min, tilt_max
-        self.gain, self.gain_tilt = gain, gain_tilt
+        self.gain_pan, self.gain_tilt = gain_pan, gain_tilt
         self.sign_pan = -1.0 if invert_pan else 1.0
         self.sign_tilt = -1.0 if invert_tilt else 1.0
         self.target_cx, self.target_cy = target_cx, target_cy
@@ -255,7 +257,7 @@ class FullBodyScenario:
 
         if fresh:
             ep, et = self._pan_err(r["cx"]), self._tilt_err(r["cy"])
-            pan_t = self._cp(cur_pan + self.gain * ep)
+            pan_t = self._cp(cur_pan + self.gain_pan * ep)
             tilt_t = self._ct(cur_tilt + self.gain_tilt * et)
             self.body_pan = pan_t
             # 리밋에 눌린 채 수렴 불가 = 물리적으로 닿지 않는 부위
@@ -299,7 +301,7 @@ class FullBodyScenario:
             down = -1.0 if region == "head" else 1.0   # head는 화면 위쪽, 나머지는 아래쪽
             tilt_t = self._ct(cur_tilt + self.gain_tilt * self.sign_tilt * down * self.blind_deg)
         if chest["visible"]:
-            pan_t = self._cp(cur_pan + self.gain * self._pan_err(chest["cx"]))
+            pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
             self.body_pan = pan_t
         return pan_t, tilt_t
 
@@ -318,14 +320,14 @@ class FullBodyScenario:
         pan_t, tilt_t = self.body_pan, self._ct(wp["tilt"])
         if fresh:
             ep, et = self._pan_err(r["cx"]), self._tilt_err(r["cy"])
-            pan_t = self._cp(cur_pan + self.gain * ep)
+            pan_t = self._cp(cur_pan + self.gain_pan * ep)
             tilt_t = self._ct(cur_tilt + self.gain_tilt * et)
             self.body_pan = pan_t
             if abs(et) < self.converge_deg:   # 보이는 동안 기억 경로를 서서히 최신화
                 wp["tilt"] += self.trim_alpha * (tilt_t - wp["tilt"])
                 wp["estimated"] = False
         elif chest["visible"]:
-            pan_t = self._cp(cur_pan + self.gain * self._pan_err(chest["cx"]))
+            pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
             self.body_pan = pan_t
 
         # 도착 후 dwell_s 체류 → 다음 부위
@@ -346,7 +348,7 @@ class FullBodyScenario:
             return self.body_pan, cur_tilt
         self._recenter_miss = 0
         ep, et = self._pan_err(chest["cx"]), self._tilt_err(chest["cy"])
-        pan_t = self._cp(cur_pan + self.gain * ep)
+        pan_t = self._cp(cur_pan + self.gain_pan * ep)
         tilt_t = self._ct(cur_tilt + self.gain_tilt * et)
         self.body_pan = pan_t
         if abs(ep) < self.converge_deg:

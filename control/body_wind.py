@@ -209,7 +209,7 @@ class BodyPatrolScenario(FullBodyScenario):
         # 헤드는 가슴을 중앙으로 (부위 조준은 순찰이 한다).
         pan_t, tilt_t = self.body_pan, cur_tilt
         if chest["visible"]:
-            pan_t = self._cp(cur_pan + self.gain * self._pan_err(chest["cx"]))
+            pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
             tilt_t = self._ct(cur_tilt + self.gain_tilt * self._tilt_err(chest["cy"]))
             self.body_pan = pan_t
 
@@ -274,7 +274,7 @@ class BodyPatrolScenario(FullBodyScenario):
 
         pan_t = self.body_pan
         if obs["chest"]["visible"]:
-            pan_t = self._cp(cur_pan + self.gain * self._pan_err(obs["chest"]["cx"]))
+            pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(obs["chest"]["cx"]))
             self.body_pan = pan_t
         return pan_t, self.aims().get(region, cur_tilt)
 

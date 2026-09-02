@@ -4,7 +4,6 @@ venv/
 *.venv/
 .env
 *.egg-info/
-*.tflite
 *.pt
 *.jpg
 .python_version/

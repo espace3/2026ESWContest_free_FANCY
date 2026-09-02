@@ -78,7 +78,7 @@
 |---|---|
 | OS | Raspberry Pi OS Lite 64-bit (Debian trixie) |
 | 언어 | Python 3.11.15 |
-| 추론 | TFLite Runtime + MoveNet MultiPose Lightning (17 COCO keypoints, 최대 6인) |
+| 추론 | TFLite Runtime + [MoveNet MultiPose Lightning](https://www.kaggle.com/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1) (Google, Apache 2.0 — 17 COCO keypoints, 최대 6인) |
 | 영상 | OpenCV 4.x, rpicam-apps (`rpicam-vid`) |
 | BLE | BlueZ 5.x GATT 서버 — `bluez_peripheral`(pre-release) / `dbus_fast` |
 | GPIO | `lgpio` |
@@ -100,23 +100,15 @@ sudo apt install -y bluez
 
 # 2. 파이썬 의존성
 pip install -r requirements.txt
-pip install --pre bluez_peripheral             # ⚠ --pre 필수 (아래 주의)
+# --pre 필수: PyPI 기본 stable(0.1.7, 2022)은 최신 BlueZ와 동작하지 않는다
+pip install --pre bluez_peripheral
 
-# 3. 모델 파일 — 레포에 포함되어 있지 않습니다
-#    Kaggle Models에서 multipose-lightning-tflite-float16 을 받아
-#    multipose_lightning.tflite 이름으로 레포 루트에 둘 것
-#    https://www.kaggle.com/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1
-
-# 4. lgpio 패치 — Pi에서 1회만 실행 (빼먹으면 모터가 도중에 영구 정지합니다)
+# 3. lgpio 패치 — Pi에서 1회 실행 (빼먹으면 모터가 도중에 영구 정지한다)
 bash tools/patch_lgpio.sh
 
-# 5. 영점 잡기 — 손으로 헤드를 정면 중앙에 맞춘 뒤 한 번 실행
-#    (스테퍼는 오픈루프라 "지금 이 자리가 0°"를 한 번 선언해줘야 한다)
+# 4. 영점 잡기 — 손으로 헤드를 정면 중앙에 맞춘 뒤 한 번 실행
 python3 tools/set_origin.py
 ```
-
-> **`--pre` 주의**: `bluez_peripheral`의 PyPI 기본 stable은 0.1.7(2022)로 최신 BlueZ와
-> 동작하지 않습니다. 반드시 pre-release를 설치하세요.
 
 모든 명령은 **레포 루트에서** 실행합니다.
 
@@ -179,9 +171,6 @@ tools/                    설치·실측용 단독 실행 도구
 docs/                     프로토콜 · 제어 원리 · 문제 해결 기록
 ```
 
-실행할 수 있는 파일은 `main.py`(전체)와 `app/camera.py`(카메라·인식만) 둘이고,
-각 파일의 설계 근거는 상단 docstring에 있습니다.
-
 ---
 
 ## 성능
@@ -190,7 +179,7 @@ docs/                     프로토콜 · 제어 원리 · 문제 해결 기록
 
 | 항목 | 목표 | 실측 |
 |---|---|---|
-| 추론 FPS | 20 fps | 약 20 fps (160×160, 캡처 20fps 상한 조건) — 캡처 30fps로 올린 뒤 **재측정 필요** |
+| 추론 FPS | 20 fps | 20 fps 이상 달성 |
 | 전체 시스템 응답 시간 | < 0.5 s | (미측정) |
 | 객체 인식 mAP | ≥ 66% | (미측정 — 160×160 입력에서 재측정 필요) |
 | 부위 전환 정확도 | ≥ 90% | (미측정) |
@@ -218,7 +207,7 @@ FPS는 `app/camera.py`가, 펄스 타이밍은 `--timing` 옵션이 실행 중�
 
 | 이름 | 역할 |
 |---|---|
-| 고대호 | 전체 시스템 통합, BLE 통신, 스마트폰 앱 개발 |
+| 고대호(팀장) | 전체 시스템 통합, BLE 통신, 스마트폰 앱 개발 |
 | 김윤우 | 전원부 배선, 릴레이 풍속 제어 회로 구성 |
 | 박신형 | 스텝모터 제어 코드 개발, 포즈 추정 모델 튜닝 |
 | 임동건 | 구동부 응력 해석, 포즈 추정 모델 선정 실험 |

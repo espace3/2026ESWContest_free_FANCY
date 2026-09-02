@@ -54,7 +54,7 @@ class BodyPatrolScenario(FullBodyScenario):
     ── 그 밖 ────────────────────────────────────────────────────────────────
     allowed는 러너가 매 프레임 "세기 1 이상인 부위"로 갱신한다. 웨이포인트가
     아직 없는 부위를 새로 켜면 매핑 단계로 돌아가 그 부위를 확보한 뒤 순찰한다.
-    부모는 건드리지 않는다 — app/fullbody_tracking.py는 그대로 반복 수렴 스캔을 쓴다.
+    부모(FullBodyScenario)는 건드리지 않는다 — 반복 수렴 스캔 경로가 그대로 남아 있다.
     """
 
     def __init__(self, *args, aim_ratio: dict[str, float] | None = None,

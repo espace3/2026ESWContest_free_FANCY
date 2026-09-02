@@ -24,6 +24,7 @@ from config import CFG
 _L_SHOULDER, _R_SHOULDER, _NOSE = 5, 6, 0
 
 _INVISIBLE = {"cx": 0.5, "cy": 0.5, "visible": False}
+_REGION_COLORS = {"head": (60, 180, 255), "upper": (0, 200, 60), "lower": (0, 120, 230)}
 
 
 def chest_point(keypoints: list[dict], conf_thr: float) -> dict:
@@ -38,6 +39,41 @@ def chest_point(keypoints: list[dict], conf_thr: float) -> dict:
     if nose["conf"] >= conf_thr:
         return {"cx": nose["x"], "cy": nose["y"], "visible": True}
     return {"cx": 0.5, "cy": 0.5, "visible": False}
+
+
+def _axes_idle(mc) -> bool:
+    """두 축 모두 목표 도달 + 큐 배출 상태인지 논블로킹 확인 (_DryMotor는 항상 True)."""
+    if not hasattr(mc, "pan"):
+        return True
+    for ax in (mc.pan, mc.tilt):
+        with ax.cond:
+            if not (ax.idle and ax.target_steps == ax.pos_steps):
+                return False
+    return True
+
+
+# ── 시각화 ───────────────────────────────────────────────────────────────────
+
+def _draw_overlay(frame, people, target_idx, smoothed, fresh, scenario,
+                  pan_cmd: float, tilt_cmd: float, fps: float):
+    from app.camera import draw_pose   # 순환 import 회피 (run_tracking 과 같은 이유)
+    vis = draw_pose(frame, people, target_idx)
+    h, w = vis.shape[:2]
+    cv2.drawMarker(vis, (w // 2, h // 2), (0, 210, 230), cv2.MARKER_CROSS, 20, 1)
+    active = scenario.active_region()
+    for name, col in _REGION_COLORS.items():
+        if fresh[name]:
+            c = (int(smoothed[name]["cx"] * w), int(smoothed[name]["cy"] * h))
+            if name == active:
+                cv2.circle(vis, c, 14, col, 3)
+            else:
+                cv2.circle(vis, c, 6, col, 1)
+    cv2.putText(vis, f"{scenario.state.upper()} region={active}", (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 210, 230), 2)
+    cv2.putText(vis, f"pan {pan_cmd:+.1f}deg  tilt {tilt_cmd:+.1f}deg  fps {fps:.1f}",
+                (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 200, 0), 2)
+    return vis
+
 
 
 class _DryMotor:

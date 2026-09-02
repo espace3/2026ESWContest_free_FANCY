@@ -41,7 +41,7 @@ Pi 5는 pigpio(DMA 기반 하드웨어 타이밍)를 쓸 수 없어 lgpio만 선
 
 ### 증상
 
-카메라 추적(`verify_track_*`, `app/fullbody_tracking.py`, `main.py`)을 돌리면 모터에서
+카메라 추적(`verify_track_*`, `main.py`)을 돌리면 모터에서
 달그락거리는 소리가 난다. `verify_motor.py` 단독 구동은 어떤 조건(긴 이동/왕복/잔이동/
 넓은 범위)에서도 조용하다. 소리는 **모터가 실제로 도는 동안에만** 난다.
 

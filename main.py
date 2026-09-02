@@ -114,10 +114,11 @@ from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
 from vision.target_selector import (DEFAULT_MATCH_RADIUS, person_center,
                                     select_target)
-from app.tracking import add_state_args, open_motor_from_args
+from app.tracking import (add_state_args, open_motor_from_args,
+                          _INVISIBLE, _axes_idle, _draw_overlay, chest_point)
 from app.camera import (_open_camera, _read_frame, _release_camera,
                             _WebStreamState, _make_handler, _ThreadedHTTP)
-from app.fullbody_tracking import _INVISIBLE, _axes_idle, _draw_overlay, chest_point
+
 from app.ble_protocol import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
                            STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS,
                            _hex, _make_runner, _window_viewer)
@@ -181,7 +182,7 @@ class _ReportingDetector:
 def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_state):
     """부위 모드(0x03) 러너 — 내부 2상(순찰↔추적 폴백) 단일 세션 (docstring 5).
 
-    fullbody_tracking._track_loop를 세션형(stop_event)으로 옮기고 풍속 중재
+    전신 추적 루프를 세션형(stop_event)으로 옮기고 풍속 중재
     (body_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
     시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자 위치·거리가
     달라졌을 수 있어서인데, 직접 매핑이라 다시 잡는 비용이 한 프레임이다.
@@ -248,7 +249,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     stop_event.wait(0.03)
                     continue
 
-                # ── 추론/대상 선정/스무딩 (fullbody_tracking._track_loop와 동일) ──
+                # ── 추론/대상 선정/스무딩 (run_tracking 과 같은 순서) ──
                 people = detector.infer(frame)["people"]
                 target_idx = (
                     select_target(people, prev_center=prev_center)
@@ -645,7 +646,7 @@ def main() -> None:
                         "모터가 큐를 비워 정지→재기동을 반복하지 않을 만큼이면 "
                         "된다. 스윕 속도는 모터 순항 속도로 고정된다.")
     # ── 부위 모드 (0x03) — docstring 5. 세부 시나리오 파라미터(수렴/탐색 등)는
-    #    app/fullbody_tracking.py와 같은 기본값을 쓴다 (control/fullbody_scenario.py) ──
+    #    control/fullbody_scenario.py 의 기본값을 그대로 쓴다 ──
     p.add_argument("--body-dwell", type=float, default=2.0,
                    help="부위 순찰 체류 시간 (s)")
     p.add_argument("--body-exit-deg", type=float, default=12.0,

@@ -179,8 +179,8 @@ main.py                 ← 진입점. BLE 서비스, 부위 모드 러너, 전�
 app/
  ├── ble_service.py        모드 감독, 풍속 릴레이 연동, 전원 게이팅, 회전·원점복귀 러너
  │    └── ble_protocol.py    BLE 프로토콜 상수(UUID·모드·풍량), GATT 서버 부팅, 추적 러너
- ├── fullbody_tracking.py  전신(머리→발) 추적 루프, 화면 오버레이
- ├── tracking.py           팬/틸트 닫힌 루프 본문, 모터 핸들 열기, 상태파일 인자
+ ├── tracking.py           팬/틸트 닫힌 루프 본문, 모터 핸들 열기, 상태파일 인자,
+                           전신 추적 공용 헬퍼(조준점·오버레이)
  └── camera.py             카메라 백엔드 3종(picamera2 / rpicam-vid / OpenCV),
                            MJPEG 웹스트림, 포즈 시각화
 scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
@@ -191,8 +191,7 @@ scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
 | **`main.py`** | **진입점.** STATUS 실구현(read 스냅샷 + notify 에코백), 요청/유효 모드 분리, 부위 모드(순찰 ↔ 추적 폴백) |
 | `app/ble_service.py` | 모드 감독(`_ModeSupervisor`), 풍속 릴레이 실구동, 전원 게이팅, 연결 끊김 처리 |
 | `app/ble_protocol.py` | BLE UUID·모드·풍량 상수, GATT 서버 부팅, 타겟 모드 → 추적 러너 |
-| `app/fullbody_tracking.py` | 전신 추적 루프와 화면 오버레이 |
-| `app/tracking.py` | 팬/틸트 닫힌 루프 본문, 모터 핸들 열기 |
+| `app/tracking.py` | 팬/틸트 닫힌 루프 본문(`run_tracking`), 모터 핸들 열기, 공용 헬퍼 |
 | `app/camera.py` | 카메라 캡처 백엔드, MJPEG 웹스트림, 포즈 시각화 |
 | `scripts/set_origin.py` | 최초 1회 영점 설정 — [설치](#설치) 5번 |
 

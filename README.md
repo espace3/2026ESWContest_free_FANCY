@@ -177,30 +177,30 @@ docs/                     프로토콜·알고리즘·실측 문서 (아래 표 
 ```
 main.py                 ← 진입점. BLE 서비스, 부위 모드 러너, 전체 상태기계
 app/
- ├── ble_service.py        모드 러너(회전·원점복귀), 모드 감독, 연결 끊김 감지
- │    └── ble_protocol.py    BLE 프로토콜 상수(UUID·모드·풍량), 추적 러너, supervisor 기반 클래스
+ ├── runners.py            모드별 러너 팩토리 4종(추적·부위·회전·복귀) + 모드 감독
  ├── tracking.py           팬/틸트 닫힌 루프 본문, 모터 핸들 열기, 상태파일 인자,
-                           전신 추적 공용 헬퍼(조준점·오버레이)
+ │                         전신 추적 공용 헬퍼(조준점·오버레이)
  └── camera.py             카메라 백엔드 3종(picamera2 / rpicam-vid / OpenCV),
-                           MJPEG 웹스트림, 포즈 시각화
+                           MJPEG 웹스트림, 포즈 시각화, cv2 창 스레드
 scripts/set_origin.py   최초 1회 영점 설정 — 설치 5번
 ```
 
 | 파일 | 역할 |
 |---|---|
 | **`main.py`** | **진입점.** STATUS 실구현(read 스냅샷 + notify 에코백), 요청/유효 모드 분리, 부위 모드(순찰 ↔ 추적 폴백) |
-| `app/ble_service.py` | 모드 감독(`_ModeSupervisor`), 기본 모드 러너(회전·복귀), 연결 끊김 감지 |
-| `app/ble_protocol.py` | BLE UUID·모드·풍량 상수, 타겟 모드 추적 러너, supervisor 기반 클래스 |
-| `app/tracking.py` | 팬/틸트 닫힌 루프 본문(`run_tracking`), 모터 핸들 열기, 공용 헬퍼 |
-| `app/camera.py` | 카메라 캡처 백엔드, MJPEG 웹스트림, 포즈 시각화 |
+| `app/runners.py` | 모드별 러너 팩토리(추적·부위·회전·복귀), 모드 감독(`ModeSupervisor`), 연결 끊김 감지 |
+| `app/tracking.py` | 팬/틸트 닫힌 루프 본문(`run_tracking`), 모터 핸들 열기, 공용 헬퍼, `--dry-run` 스텁 |
+| `app/camera.py` | 카메라 캡처 백엔드·재시도 오픈, MJPEG 웹스트림, 포즈 시각화, cv2 창 스레드 |
+| `config.py` | 튜닝값 전부 + BLE 프로토콜 상수(UUID·모드·풍량 — 앱과 공유하는 계약) |
 | `scripts/set_origin.py` | 최초 1회 영점 설정 — [설치](#설치) 5번 |
 
-`app/`의 모듈들은 개발 과정에서 각각 `verify_E2E_v1/v2`, `verify_fulltrack`,
+`app/`의 모듈들은 개발 과정에서 각각 `verify_E2E_v1/v2/v3`, `verify_fulltrack`,
 `tracking_core`, `verify_movenet`이라는 이름의 **독립 실행 검증 스크립트**로 시작해,
-기능이 확정되면서 상위 단계가 import해 쓰는 라이브러리가 된 것들입니다. 단계별
-진입점(각자의 `main()`과 GATT 서비스 클래스)은 `main.py`가 그 역할을 모두 넘겨받은
-뒤 제거했습니다 — 안 도는 코드가 남아 있으면 읽는 쪽이 매번 "이게 실제로 실행되나"를
-확인해야 하기 때문입니다. 그 단계별 코드는 git 이력에 있습니다.
+기능이 확정되면서 상위 단계가 import해 쓰는 라이브러리가 된 것들입니다. 그래서 한동안
+파일이 개발 순서(v1/v2/v3)대로 나뉘어 있었고, 같은 역할의 코드가 세 파일에 흩어져
+있었습니다. 제출 전에 **책임 기준으로 다시 묶고** 단계별 진입점은 제거했습니다 —
+안 도는 코드가 남아 있으면 읽는 쪽이 매번 "이게 실제로 실행되나"를 확인해야 하기
+때문입니다. 그 단계별 코드는 git 이력에 있습니다.
 
 지금 실행 가능한 진입점은 **`main.py`(전체 시스템)와 `app/camera.py`(카메라·인식만)
 둘뿐**이고, 설계 근거는 각 파일 상단 docstring에 남겨 두었습니다.

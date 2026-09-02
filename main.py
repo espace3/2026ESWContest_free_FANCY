@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py - 최종 진입점: BLE + 추적 + 부위별 풍속
-(개발 이력상 verify_E2E_v3.py — v1→v2→v3 계보는 README "실행 파일 구성" 참고)
+main.py - 진입점: BLE GATT 서비스 + 전체 조립
 
-app/ble_service.py와의 차이만 기록합니다 — 카메라 세션/창 스레드/축별 튜닝/
-회전 스윕/연결 끊김 처리 등은 v1·v2 docstring과 동일하므로 반복하지 않습니다:
+  EswFanServiceV3   앱의 write 를 받는 GATT 서비스 (전원/모드/풍량/STATUS)
+  _ble_main_v3      BLE 부팅 — 페어링 에이전트, 서비스 등록, Advertising
+  main()            CLI 인자 → 모터·릴레이·카메라·러너·supervisor 조립
+
+모드마다 도는 러너와 그 교대는 app/runners.py, 카메라·시각화는 app/camera.py,
+추적 루프는 app/tracking.py, 부위 시나리오는 control/body_wind.py 에 있다.
+
+아래 설계 근거는 이 파일이 verify_E2E_v3.py 이던 시절 v2 와의 차이로 적힌
+것이다. v1/v2 는 각자의 진입점을 제거하고 라이브러리로 흡수했으므로(2026-09-02)
+"v2 는 이랬다"는 지금 git 이력에서만 확인할 수 있다:
 
   1. 리모컨(앱) = 설정의 주체 — v2의 모드별 풍량 preset(_basic/_target_level)과
      "모드 전환 시 저장 세기 재적용"(v2 docstring 2)을 폐기한다. 세기는 오직
@@ -84,17 +91,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import math
 import signal
 import sys
 import threading
-import time
 from pathlib import Path
 
 # 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent))
-
-import cv2
 
 from bluez_peripheral.adapter import Adapter
 from bluez_peripheral.advert import Advertisement
@@ -102,312 +105,24 @@ from bluez_peripheral.gatt import CharacteristicFlags as CharFlags
 from bluez_peripheral.gatt import Service, characteristic
 from bluez_peripheral.util import get_message_bus
 
-from config import CFG
+from config import (CFG, SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
+                    STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS)
 
 _TRK = CFG["tracking"]   # 추적 튜닝 기본값 (CLI로 덮어쓸 수 있음)
-from control.body_wind import BodyPatrolScenario, MotionGate, body_wind_level
-from control.control_signal_generator import (apply_deadzone, clamp_angle,
-                                              compute_pan_angle,
-                                              compute_tilt_angle)
-from control.recognition_reporter import RecognitionReporter
 from vision.pose_estimator import MoveNetMultiPoseDetector
 from vision.pose_tracker import PoseTracker
-from vision.target_selector import (DEFAULT_MATCH_RADIUS, person_center,
-                                    select_target)
-from app.tracking import (add_state_args, open_motor_from_args,
-                          _INVISIBLE, _axes_idle, _draw_overlay, chest_point)
-from app.camera import (_open_camera, _read_frame, _release_camera,
-                            _WebStreamState, _make_handler, _ThreadedHTTP)
-
-from app.ble_protocol import (SERVICE_UUID, POWER_UUID, MODE_UUID, WIND_UUID,
-                           STATUS_UUID, LOCAL_NAME, MODE_NAMES, WIND_TARGETS,
-                           _hex, _make_runner, _window_viewer)
-from app.ble_service import (_DryRelay, _make_sweeper, _make_homer,
-                           _ModeSupervisor, _watch_disconnects)
+from app.tracking import add_state_args, open_motor_from_args, _DryRelay
+from app.camera import (_WebStreamState, _make_handler, _ThreadedHTTP,
+                        _window_viewer)
+from app.runners import (ModeSupervisor, _ReportingDetector, _make_body_runner,
+                         _make_homer, _make_runner, _make_sweeper,
+                         _watch_disconnects)
 
 
-def _open_cam_retry(args):
-    """카메라 오픈 + 첫 프레임 확인 — v1 _make_runner._open_cam과 동일 로직
-    (그쪽은 클로저 안이라 import 불가). 실패 경로 설명은 v1 참고."""
-    for attempt in range(1, 4):
-        try:
-            cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
-        except SystemExit:
-            print(f"[E2E] 카메라 오픈 실패 ({attempt}/3) — 1s 후 재시도")
-            time.sleep(1.0)
-            continue
-        deadline = time.time() + 4.0
-        while time.time() < deadline:
-            if _read_frame(cam, backend) is not None:
-                print(f"[E2E] 카메라 준비 완료 (backend={backend})")
-                return cam, backend
-            time.sleep(0.1)
-        print(f"[E2E] 카메라가 프레임을 못 줌 ({attempt}/3) — 닫고 재오픈")
-        _release_camera(cam, backend)
-        time.sleep(1.0)
-    raise RuntimeError("[E2E] 카메라를 열 수 없습니다 (재시도 소진)")
 
-
-class _ReportingDetector:
-    """추적 러너용 디텍터 래퍼 — "사람이 보이는가"를 서비스에 보고한다.
-
-    일반 타겟 모드(0x02)의 추적 루프는 app/tracking.py 안에 있어 콜백 자리가 없다.
-    공유 모듈(ble_protocol._make_runner · app/tracking.py — 추적 모드 공용)을 고치지 않고
-    인식 상태를 얻으려고 디텍터를 감쌌다: infer 결과를 들여다보기만 하고 그대로
-    돌려준다. 서비스는 나중에 만들어지므로(supervisor → service 순서) attach로
-    꽂는다. 보고 시점은 RecognitionReporter가 정한다(깜빡임 억제).
-    부위 러너는 선정된 대상(target_idx) 기준으로 따로 보고하므로 여기 기준
-    ("사람이 한 명이라도 검출")과 미세하게 다를 수 있다.
-    """
-
-    def __init__(self, detector) -> None:
-        self._d = detector
-        self._service = None
-        self._reporter = RecognitionReporter()
-
-    def attach(self, service) -> None:
-        self._service = service
-
-    def infer(self, frame):
-        result = self._d.infer(frame)
-        seen = self._reporter.update(time.time(), bool(result.get("people")))
-        if seen is not None and self._service is not None:
-            self._service.report_recognized(seen)
-        return result
-
-    def __getattr__(self, name):
-        return getattr(self._d, name)   # 나머지 속성/메서드는 원본에 위임
-
-
-def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_state):
-    """부위 모드(0x03) 러너 — 내부 2상(순찰↔추적 폴백) 단일 세션 (docstring 5).
-
-    전신 추적 루프를 세션형(stop_event)으로 옮기고 풍속 중재
-    (body_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
-    시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자 위치·거리가
-    달라졌을 수 있어서인데, 직접 매핑이라 다시 잡는 비용이 한 프레임이다.
-    gains=(pan, tilt)는 main에서 미리 캡처한 값을 그대로 받는다.
-    """
-    fov = CFG["fov"]
-    fov_h, fov_v = fov["h"], fov["v"]
-    gain_pan, gain_tilt = gains
-    # 재조준·탐색은 부모가 수렴 판정으로 진행을 막으므로, 그 구간에서만
-    # 데드존을 gain x converge_deg 아래로 좁힌다 (순찰은 시간 슬롯이라
-    # 도착 판정이 없어 사용자 데드존을 그대로 써도 갇히지 않는다).
-    conv_dz_pan = min(args.body_deadzone_pan, 0.5 * gain_pan * args.body_converge)
-    conv_dz_tilt = min(args.body_deadzone_tilt, 0.5 * gain_tilt * args.body_converge)
-    sign_pan = -1.0 if args.invert_pan else 1.0
-    sign_tilt = -1.0 if args.invert_tilt else 1.0
-
-    def _region_levels():
-        b = service.body_levels  # BLE 스레드가 갱신하는 dict — int 읽기는 원자적
-        return {"head": b[0x01], "upper": b[0x02], "lower": b[0x03]}
-
-    def _run(stop_event):
-        cam, backend = _open_cam_retry(args)
-        scenario = BodyPatrolScenario(
-            fov_h, fov_v, args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
-            gain_pan=gain_pan, gain_tilt=gain_tilt,
-            invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
-            target_cx=args.target_cx, target_cy=args.target_cy,
-            dwell_s=args.body_dwell,
-            converge_deg=args.body_converge,
-            map_timeout_s=args.body_map_timeout,
-            # 시나리오 자체 이동 감지(recenter)는 게이트보다 둔하게 — 게이트가
-            # 1차 판정자다 (docstring 5의 "이동 감지 우선순위" 참고).
-            move_thr_deg=args.body_move_thr,
-            rescan_thr_deg=args.body_rescan_thr,
-            # 조준 편향: 머리는 위로, 상체는 아래로 — 부위 간 틸트 간격 확대
-            # 조준 보정은 각도가 아니라 측정 간격의 배수 — 거리 자동 대응.
-            aim_ratio={"head": args.body_head_ratio,
-                       "upper": args.body_upper_ratio},
-            spread_ratio=args.body_spread_ratio,
-            tilt_rate_dps=args.body_tilt_rate)
-        gate = MotionGate(args.body_exit_deg, args.body_exit_window,
-                          args.body_still_s, args.body_still_deg)
-        tracker.reset()  # 이전 세션의 스무딩 잔재 제거
-        phase = "patrol"
-        service.report_effective(0x03)
-        prev_center = None
-        last_pan, last_tilt = mc.current_position()
-        recognition = RecognitionReporter()   # 인식 Status 보고 시점 (깜빡임 억제)
-        fps_hist: list[float] = []
-        t_prev = time.time()
-        last_log = 0.0
-        print(f"[E2E] 부위 순찰 세션 시작 (매핑 + 시간 슬롯) — 조준 배수 "
-              f"머리 {args.body_head_ratio:g} 상체 {args.body_upper_ratio:g} "
-              f"최소간격 {args.body_spread_ratio:g} (측정 간격 대비)")
-        try:
-            while not stop_event.is_set():
-                t0 = time.time()
-                frame = _read_frame(cam, backend)
-                if frame is None:
-                    if web_state:
-                        web_state.update_stall(["no frames from the camera."])
-                    stop_event.wait(0.03)
-                    continue
-
-                # ── 추론/대상 선정/스무딩 (run_tracking 과 같은 순서) ──
-                people = detector.infer(frame)["people"]
-                target_idx = (
-                    select_target(people, prev_center=prev_center)
-                    if people else None
-                )
-                if target_idx is not None:
-                    kps = people[target_idx]["keypoints"]
-                    new_center = person_center(people[target_idx])
-                    if (prev_center is not None and new_center is not None
-                            and math.dist(new_center, prev_center) > DEFAULT_MATCH_RADIUS):
-                        tracker.reset()  # 대상 교체 → 스무딩 리셋
-                    prev_center = new_center
-                    chest = chest_point(kps, args.conf)
-                    tracker_input = {"detected": True,
-                                     "regions": people[target_idx]["regions"]}
-                else:
-                    chest = dict(_INVISIBLE, paired=False)
-                    tracker_input = {"detected": False,
-                                     "regions": {k: _INVISIBLE for k in PoseTracker.REGIONS}}
-                smoothed = tracker.update(tracker_input)
-                fresh = {k: tracker.miss[k] == 0 for k in PoseTracker.REGIONS}
-
-                seen = recognition.update(t0, target_idx is not None)
-                if seen is not None:
-                    service.report_recognized(seen)
-
-                cur_pan, cur_tilt = mc.current_position()
-                levels = _region_levels()
-                scenario.allowed = {r for r, lv in levels.items() if lv > 0}
-                scenario.levels = levels   # 세기 0인 부위는 체류 없이 지나간다
-                # 조준점은 화면 중앙이 아니라 --target-cx/cy 다. 카메라 렌즈와
-                # 송풍구가 같은 높이가 아니라 렌즈를 정확히 맞추면 바람은 어긋난다
-                # — cy 를 0.5 에서 옮겨 그 차이를 보정한다.
-                # paired=False(한쪽 어깨만)면 cx 가 어깨폭 절반만큼 치우쳐 있어
-                # 팬 기준으로 못 쓴다 — 오차 0으로 두어 팬을 유지한다 (chest_point 참고).
-                chest_err = (sign_pan * compute_pan_angle(chest["cx"] - (args.target_cx - 0.5), fov_h)
-                             if chest["visible"] and chest["paired"] else 0.0)
-
-                # ── 상별 목표각 + 풍속 중재 + 전환 판정 (docstring 5) ─────────
-                if phase == "patrol":
-                    pan_t, tilt_t = scenario.step({
-                        "t": t0, "pos": (cur_pan, cur_tilt), "idle": _axes_idle(mc),
-                        "target_idx": target_idx, "chest": chest,
-                        "regions": smoothed, "fresh": fresh,
-                    })
-                    for ev in scenario.events:
-                        print(f"\n[E2E] {ev}")
-                    fan.set_speed(body_wind_level(scenario, levels,
-                                                  service.common_level))
-                    if gate.update_patrol(t0, cur_pan, scenario.state == "patrol"):
-                        phase = "fallback"
-                        gate.reset_fallback()
-                        service.report_effective(0x02)
-                        print("\n[E2E] 이동 감지 → 추적 폴백 (정지하면 순찰 재개)")
-                else:
-                    if chest["visible"]:
-                        et = sign_tilt * compute_tilt_angle(chest["cy"] - (args.target_cy - 0.5), fov_v)
-                        pan_t = clamp_angle(cur_pan + gain_pan * chest_err,
-                                            args.pan_min, args.pan_max)
-                        tilt_t = clamp_angle(cur_tilt + gain_tilt * et,
-                                             args.tilt_min, args.tilt_max)
-                    else:
-                        pan_t, tilt_t = last_pan, last_tilt  # 미관측 — 조준 유지
-                    # 유효 모드가 추적(0x02)이므로 풍속도 추적 모드와 동일한
-                    # 공용 세기(앱 타겟 화면 표시값)를 쓴다 — 리모컨 주체 일관.
-                    fan.set_speed(service.common_level)
-                    if gate.update_fallback(t0, cur_pan, chest["visible"]):
-                        phase = "patrol"
-                        gate.reset_patrol()
-                        service.report_effective(0x03)
-                        print("\n[E2E] 정지 감지 → 부위 순찰 재개")
-
-                # 데드존은 원래 목적(포즈 잡음이 모터로 새는 것 차단)대로
-                # 쓴다. 순찰이 시간 슬롯이라 도착 판정이 없어져, 데드존이
-                # 남기는 정지 오차가 진행을 막지 않는다. 다만 재조준·탐색은
-                # 부모가 여전히 수렴으로 판정하므로 그때만 좁힌다.
-                converging = scenario.state in ("recenter", "search")
-                # 팬은 순찰에서도 사용자 데드존을 쓴다(1.0° — 사각지대 3.3°).
-                # 한때 2.0°였던 건 하체→상체 전환에서 팬이 따라 움직이는 것을
-                # 막기 위해서였는데, 그 원인은 잡음이 아니라 한쪽 어깨만 잡힌
-                # 프레임의 cx 도약이었다 — chest_point 의 paired 로 원인을 막은
-                # 뒤 되돌렸다 (a6a41b4). 넓은 데드존은 도약을 근거리에서 막지도
-                # 못하면서(1.3m 이내) 상시 조준 오차만 6.7° 로 키웠다.
-                pan_g = apply_deadzone(pan_t, last_pan,
-                                       conv_dz_pan if converging else args.body_deadzone_pan)
-                # 틸트는 순찰도 좁힌다 — 조준이 연속 피드백(현재각 + gain x 오차)
-                # 이라 넓은 데드존은 오차 < 데드존/gain 에서 명령을 통째로 막아
-                # 그만큼 못 미친 채 세운다 (1.0/0.2 = 5°). 좁히면 1.25°.
-                tilt_g = apply_deadzone(
-                    tilt_t, last_tilt,
-                    conv_dz_tilt if (converging or scenario.state == "patrol")
-                    else args.body_deadzone_tilt)
-                if not stop_event.is_set() and (pan_g, tilt_g) != (last_pan, last_tilt):
-                    mc.move_to(pan_g, tilt_g)
-                    last_pan, last_tilt = pan_g, tilt_g
-
-                # ── FPS/로그/프레임 송출 ─────────────────────────────────────
-                dt = time.time() - t_prev
-                t_prev = time.time()
-                fps_hist.append(1.0 / dt if dt > 0 else 0.0)
-                if len(fps_hist) > 30:
-                    fps_hist.pop(0)
-                fps = sum(fps_hist) / len(fps_hist)
-                if time.time() - last_log >= 1.0:
-                    tag = scenario.state if phase == "patrol" else "fallback"
-                    print(f"\r[{time.strftime('%H:%M:%S')}] body:{tag:<8} "
-                          f"rg={scenario.active_region():<5} pan={cur_pan:+7.2f}° "
-                          f"tilt={cur_tilt:+6.2f}° "
-                          f"wind={fan_level_txt(levels, scenario, phase, service.common_level)} "
-                          f"fps={fps:4.1f}  ", end="", flush=True)
-                    last_log = time.time()
-                if web_state:
-                    vis = _draw_overlay(frame, people, target_idx, smoothed, fresh,
-                                        scenario, last_pan, last_tilt, fps,
-                                        target_cx=args.target_cx,
-                                        target_cy=args.target_cy,
-                                        aim_bias_deg=scenario.aim_ratio.get(
-                                            scenario.active_region(), 0.0)
-                                        * scenario.gap_deg,
-                                        fov_v=fov_v)
-                    if phase == "fallback":
-                        cv2.putText(vis, "FALLBACK (tracking)", (10, 72),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 80, 255), 2)
-                    web_state.update(vis)
-                stop_event.wait(max(0.0, 0.02 - (time.time() - t0)))
-        finally:
-            # 러너 소유 종료 — 릴레이를 0으로 놓고 나가면, 서비스가 join 후
-            # 다음 상태를 재적용한다 (docstring 7).
-            fan.set_speed(0)
-            _release_camera(cam, backend)
-            time.sleep(0.3)  # 다음 세션 재오픈 전 libcamera 자원 해제 여유
-
-    return _run
-
-
-def fan_level_txt(levels, scenario, phase, common_level) -> str:
-    """상태 로그용 — 지금 릴레이에 적용 중인 세기 표기."""
-    lv = (common_level if phase == "fallback"
-          else body_wind_level(scenario, levels, common_level))
-    return f"{lv}단" if lv else "정지"
-
-
-class _ModeSupervisorV3(_ModeSupervisor):
-    """v2 supervisor + 부위 모드(0x03) 전용 러너 분리 (v2는 0x02와 동일 취급).
-
-    body_fn은 서비스보다 늦게 만들어져(러너가 서비스의 report_*를 쓰므로)
-    main에서 생성 후 set_body_runner로 주입한다.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._body_fn = None
-
-    def set_body_runner(self, body_fn) -> None:
-        self._body_fn = body_fn
-
-    def _select_runner(self):
-        if self._power_on and self._mode == 0x03 and self._body_fn is not None:
-            return self._body_fn
-        return super()._select_runner()
+def _hex(value):
+    """수신 바이트 로그용 — b"\x02\x03" → "0x02 0x03"."""
+    return " ".join(f"0x{b:02X}" for b in value)
 
 
 class EswFanServiceV3(Service):
@@ -420,7 +135,7 @@ class EswFanServiceV3(Service):
 
     _CHAR_NO = {"power": 1, "mode": 2, "wind": 3}   # 에코백의 Characteristic 번호
 
-    def __init__(self, supervisor: _ModeSupervisor, fan):
+    def __init__(self, supervisor: ModeSupervisor, fan):
         super().__init__(SERVICE_UUID, True)
         self._supervisor = supervisor
         self._fan = fan
@@ -806,7 +521,7 @@ def main() -> None:
                 reporting_detector = _ReportingDetector(detector)
                 track_fn = _make_runner(args.axis, reporting_detector, tracker,
                                         mc, args, web_state)
-                supervisor = _ModeSupervisorV3(track_fn, _make_sweeper(mc, args),
+                supervisor = ModeSupervisor(track_fn, _make_sweeper(mc, args),
                                                _make_homer(mc, home_pan=False),
                                                _make_homer(mc, home_pan=True),
                                                stop_fn=mc.stop,

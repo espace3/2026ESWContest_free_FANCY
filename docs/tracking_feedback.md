@@ -1,6 +1,6 @@
 # 추적 피드백 원리 — 왜 각도를 "더하는가"
 
-`app/tracking.py`, `control/body_wind.py`, `main.py`의 추적 루프가 공통으로
+`app/tracking.py`, `app/runners.py`, `control/body_wind.py`의 추적 루프가 공통으로
 따르는 제어 원리. 코드를 읽기 전에 이 문서를 먼저 보면 "왜 절대 각도를 계산하지 않고
 현재 각도에 더하는가"가 풀린다.
 

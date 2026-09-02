@@ -17,6 +17,23 @@ _CAM_W, _CAM_H = 640, 360
 _FOV_H_DEG = 102.0
 _FOV_V_DEG = 67.0
 
+# ── BLE 프로토콜 (docs/ble_protocol.md · 앱과 반드시 일치) ───────────────────
+# 튜닝값이 아니라 앱팀과 합의한 계약이다 — 바꾸면 앱도 같이 바꿔야 한다.
+# 예전에는 app/ble_protocol.py 안에 있어 앱쪽에서 찾기 어려웠다 (2026-09-02 이동).
+UUID_BASE = "14d7{:04x}-7197-49e5-a017-0b2f308120f0"
+SERVICE_UUID = UUID_BASE.format(0x0001)
+POWER_UUID = UUID_BASE.format(0x0002)
+MODE_UUID = UUID_BASE.format(0x0003)
+WIND_UUID = UUID_BASE.format(0x0004)
+STATUS_UUID = UUID_BASE.format(0x0005)
+
+LOCAL_NAME = "ESW-FAN"
+
+MODE_NAMES = {0x00: "기본-고정", 0x01: "기본-회전", 0x02: "타겟", 0x03: "타겟-부위"}
+WIND_TARGETS = {0x00: "공용", 0x01: "머리", 0x02: "상체", 0x03: "하체"}
+TARGET_MODES = (0x02, 0x03)   # 카메라 추적을 쓰는 모드
+
+
 CFG: dict = {
     # ── 카메라 ──────────────────────────────────────────────────────────────
     "camera": {

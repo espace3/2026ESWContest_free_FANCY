@@ -65,7 +65,7 @@ motor_controller.py 본구현(논블로킹) 이후 남은 결정·검증 사항.
       따른 조용한 탈조 감시(종료 시 0° 복귀 ↔ 시작 마커, lgpio_patch.md 잔여 위험).
 
 - [x] **타겟 추적 중 팬·틸트 "동시" 정지 — 원인 확정: lgpio EINVAL 스핀 (2026-08-26 해결)**:
-      2026-08-25에 `app/ble_service.py --axis pantilt`에서 두 축이 함께 멎던 그 현상은
+      2026-08-25에 두 축 동시 추적(당시 `app/ble_service.py --axis pantilt`)에서 두 축이 함께 멎던 그 현상은
       **liblgpio 송출 스레드의 EINVAL 무한 스핀**이었다. 큐 소진 시 `pthTxDelayMicros`가
       음수가 되어 `clock_nanosleep`이 EINVAL을 즉시 반환하고, `while(clock_nanosleep(...));`
       가 같은 인자로 무한 재시도해 **전 핀의 펄스 송출이 영구 정지**한다.

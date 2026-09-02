@@ -8,8 +8,8 @@ app/tracking.py - 팬/틸트 닫힌 루프 공유 모듈
 호출하도록 리팩터되어 있으며 `stop_event`를 아무도 set하지 않으므로 단독 실행 시
 동작은 기존과 100% 동일하다.
 
-app/ble_protocol.py는 BLE "타겟 모드" 명령에 맞춰 이 함수 중 하나를 백그라운드
-스레드로 시작/정지시키는 용도로 재사용한다 (stop_event.set() 후 join).
+app/runners.py 의 _make_runner 가 BLE "타겟 모드" 명령에 맞춰 이 함수를 백그라운드
+스레드로 시작/정지시킨다 (stop_event.set() 후 join).
 """
 
 from __future__ import annotations
@@ -144,6 +144,25 @@ class _DryMotor:
     def wait_until_idle(self, timeout: float | None = None) -> bool: return True
     def close(self) -> None: ...
     def __enter__(self) -> "_DryMotor": return self
+    def __exit__(self, *exc) -> None: ...
+
+
+class _DryRelay:
+    """--dry-run용 릴레이 스텁. lgpio/실릴레이 없이 BLE→풍속 게이팅 로직만
+    확인하기 위한 것. FanRelay처럼 같은 목표 반복은 무시한다(로그 소음 방지)."""
+
+    def __init__(self) -> None:
+        self._level = 0
+
+    def set_speed(self, level: int) -> None:
+        if level == self._level:
+            return
+        self._level = level
+        print(f"[relay] DRY-RUN — set_speed({level}) (실제 릴레이 미구동)")
+
+    def __enter__(self) -> "_DryRelay":
+        return self
+
     def __exit__(self, *exc) -> None: ...
 
 

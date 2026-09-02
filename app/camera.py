@@ -488,6 +488,70 @@ def _release_camera(cam, backend):
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
 
+def _open_cam_retry(args):
+    """카메라를 열고 **첫 프레임까지 실제로 오는지** 확인한 뒤 반환한다.
+
+    재오픈이 실패하는 두 가지 조용한 경로를 모두 잡는다:
+    - `_open_camera`는 전부 실패하면 `sys.exit(1)`을 부르는데, 백그라운드
+      스레드 안의 SystemExit는 그 스레드만 조용히 죽인다 → 잡아서 재시도.
+    - rpicam-vid는 Popen이 성공해도 카메라를 못 잡으면(이전 세션 자원 해제
+      지연 등) 곧바로 죽는다(stderr는 버려져 에러도 안 보임). 이러면 추적
+      루프가 frame=None만 무한 반복하며 창도 모터도 반응이 없다 — 그래서
+      오픈 성공 판정을 "첫 프레임 수신"으로 한다.
+
+    추적 러너와 부위 러너가 같은 함수를 쓴다 (예전에는 각자 같은 코드를
+    복사해 갖고 있었다 — 2026-09-02 통합).
+    """
+    for attempt in range(1, 4):
+        try:
+            cam, backend = _open_camera(args.opencv, args.cam, use_rpicam=args.rpicam)
+        except SystemExit:
+            print(f"[E2E] 카메라 오픈 실패 ({attempt}/3) — 1s 후 재시도")
+            time.sleep(1.0)
+            continue
+        deadline = time.time() + 4.0
+        while time.time() < deadline:
+            if _read_frame(cam, backend) is not None:
+                print(f"[E2E] 카메라 준비 완료 (backend={backend})")
+                return cam, backend
+            time.sleep(0.1)
+        print(f"[E2E] 카메라가 프레임을 못 줌 ({attempt}/3) — 닫고 재오픈")
+        _release_camera(cam, backend)
+        time.sleep(1.0)
+    raise RuntimeError("[E2E] 카메라를 열 수 없습니다 (재시도 소진)")
+
+
+def _release_cam_pause(cam, backend):
+    """세션 종료 시 카메라 해제 — 다음 세션이 바로 재오픈해도 커널/libcamera가
+    자원을 다 놓을 시간을 준다. cv2 창 정리는 여기서 하지 않는다 (GUI 호출은
+    _window_viewer 전용 스레드가 전담 — 세션 스레드에서 부르면 다음 세션이
+    얼어붙는다, 실기 확인)."""
+    _release_camera(cam, backend)
+    time.sleep(0.3)
+
+
+def _window_viewer(web_state, stop_event) -> None:
+    """cv2 창 표시 전담 스레드 (프로세스에서 유일하게 cv2 GUI를 부르는 곳).
+
+    cv2 HighGUI(GTK)는 처음 창을 만든 스레드에 묶여서, 추적 세션 스레드가
+    직접 imshow를 부르면 두 번째 세션부터 창이 안 뜨고 루프까지 얼어붙는다
+    (실기 확인). 그래서 추적 루프는 _WebStreamState에 프레임(JPEG)만 밀어
+    넣고, 프로세스 시작 때 만든 이 스레드 하나가 창의 생성·표시·파괴를
+    전부 전담한다 — 세션이 몇 번 재시작되든 GUI 스레드는 항상 같다.
+    """
+    title = "ESW E2E"
+    last = None
+    while not stop_event.is_set():
+        jpg = web_state.latest()
+        if jpg and jpg is not last:
+            frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+            if frame is not None:
+                cv2.imshow(title, frame)
+            last = jpg
+        cv2.waitKey(30)  # GUI 이벤트 펌프 겸 표시 주기 (~33fps 상한)
+    cv2.destroyAllWindows()
+
+
 def main():
     parser = argparse.ArgumentParser(description="MoveNet MultiPose Lightning 포즈 확인용 스크립트")
     parser.add_argument("--model", default="multipose_lightning.tflite")

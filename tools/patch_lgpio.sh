@@ -24,9 +24,13 @@
 #              /usr/local/lib/aarch64-linux-gnu/liblgpio.*
 #   sudo ldconfig
 #
-# 사용법 (Pi에서, verify 스크립트를 돌리는 그 venv를 활성화한 채):
+# 사용법 (Pi에서, main.py 를 돌리는 그 venv를 활성화한 채):
 #   bash tools/patch_lgpio.sh [소스디렉터리=~/lg-src]
 # 재실행해도 안전하다(이미 패치된 소스는 건너뜀). 기록은 $SRC_DIR/patch_install.log.
+#
+# 이미 적용됐는지 확인 (1이면 패치본 로드 중):
+#   python3 -c "import lgpio,os;[print(l.split()[-1]) for l in open(f'/proc/{os.getpid()}/maps') if 'liblgpio' in l][:1]" \
+#     | xargs strings | grep -c lgpio-einval-clamp
 set -euo pipefail
 
 SRC_DIR="${1:-$HOME/lg-src}"
@@ -142,7 +146,7 @@ echo "== 4/5 실제 로드되는 라이브러리가 패치본인지 확인"
 AFTER=$(resolve_loaded_lib)
 if [ -z "$AFTER" ]; then
     echo "   ✘ 이 python에서 lgpio를 import하지 못함."
-    echo "     verify 스크립트를 돌리는 venv를 활성화하고 재실행할 것."
+    echo "     main.py 를 돌리는 venv를 활성화하고 재실행할 것."
     exit 1
 fi
 echo "   설치 후 로드 경로: $AFTER"
@@ -168,5 +172,5 @@ echo "== 5/5 기록: $LOG"
 } >> "$LOG"
 cat "$LOG"
 echo ""
-echo "완료. 재검증: app/ble_service.py를 20초 이상(BLE 전원/모드 토글 포함) 돌려 정지 재현 여부 확인."
+echo "완료. 재검증: main.py를 20초 이상(BLE 전원/모드 토글 포함) 돌려 정지 재현 여부 확인."
 echo "재현 시 'top -H'에서 FF 스레드가 다시 99% 스핀이면 패치 무효 — 4/5 확인부터 다시."

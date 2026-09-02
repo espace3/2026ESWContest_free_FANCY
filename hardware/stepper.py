@@ -2,10 +2,17 @@
 hardware/stepper.py
 
 팬틸트 스테퍼 모터 구동 — 하드웨어 호출 전용 모듈.
+
 control/control_signal.py가 계산한 각도(degree)를 받아 실제로
 GPIO STEP/DIR 펄스를 내보내는 역할만 한다. 여기에 계산 로직을 넣지 말 것.
 핀 배정·드라이버(TMC2209)·마이크로스텝·램프 파라미터는 config.py의
 "pins"/"stepper"에 있다 (모터 단독 실기 검증을 마친 값).
+
+⚠ 설치 전제 — liblgpio에 tools/patch_lgpio.sh가 적용되어 있어야 한다. 원본은 큐가
+비는 순간 송출 스레드가 clock_nanosleep EINVAL을 무한 재시도해 CPU를 100% 점유하고
+**전 핀의 펄스 송출이 영구 정지**한다 (실기 2026-07-16 확정, 2026-08-25 재확정).
+이 모듈은 이동이 끝날 때마다 큐를 비우므로(_drain) 그 조건을 상시 지나간다 —
+패치 없이는 언젠가 반드시 멈춘다. 상세: docs/lgpio_patch.md.
 
 논블로킹 구조 — 메인 루프가 20~30fps로 새 목표를 던져도 막히지 않는다:
 

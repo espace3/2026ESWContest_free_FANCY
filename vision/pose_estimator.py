@@ -34,6 +34,11 @@ HEAD_IDX = [0, 3, 4]            # nose, l_ear, r_ear
 UPPER_IDX = [5, 6, 11, 12]      # shoulders + hips
 LOWER_IDX = [13, 14, 15, 16]    # knees + ankles
 
+# 상체 조준점을 어깨 중점에서 얼마나 내릴지 — 머리중점→어깨중점 벡터의 배수.
+# 1.0 이면 그 거리만큼(≈코↔어깨), 크면 배꼽 쪽, 작으면 쇄골 쪽. 거리에 따라
+# 벡터 길이가 같이 변하므로 배수로 두면 거리 보정이 저절로 된다.
+_UPPER_EXTEND = 0.8
+
 # 골격 연결선 (시각화 쪽에서 그대로 가져다 씀)
 SKELETON = [
     (0, 1), (0, 2), (1, 3), (2, 4),           # 얼굴
@@ -227,8 +232,8 @@ class MoveNetMultiPoseDetector:
 
         head = self._region_center(kps, HEAD_IDX)
         if head["visible"]:
-            dx = (sh["cx"] - head["cx"])
-            dy = (sh["cy"] - head["cy"])
+            dx = (sh["cx"] - head["cx"]) * _UPPER_EXTEND
+            dy = (sh["cy"] - head["cy"]) * _UPPER_EXTEND
         else:
             # 머리까지 없으면 방향을 정할 수 없다 — 어깨 폭을 크기로, 화면 아래를 벙향으로
             lx, rx = kps[5]["x"], kps[6]["x"]

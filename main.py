@@ -266,7 +266,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     tracker_input = {"detected": True,
                                      "regions": people[target_idx]["regions"]}
                 else:
-                    chest = dict(_INVISIBLE)
+                    chest = dict(_INVISIBLE, paired=False)
                     tracker_input = {"detected": False,
                                      "regions": {k: _INVISIBLE for k in PoseTracker.REGIONS}}
                 smoothed = tracker.update(tracker_input)
@@ -283,8 +283,10 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 # 조준점은 화면 중앙이 아니라 --target-cx/cy 다. 카메라 렌즈와
                 # 송풍구가 같은 높이가 아니라 렌즈를 정확히 맞추면 바람은 어긋난다
                 # — cy 를 0.5 에서 옮겨 그 차이를 보정한다.
+                # paired=False(한쪽 어깨만)면 cx 가 어깨폭 절반만큼 치우쳐 있어
+                # 팬 기준으로 못 쓴다 — 오차 0으로 두어 팬을 유지한다 (chest_point 참고).
                 chest_err = (sign_pan * compute_pan_angle(chest["cx"] - (args.target_cx - 0.5), fov_h)
-                             if chest["visible"] else 0.0)
+                             if chest["visible"] and chest["paired"] else 0.0)
 
                 # ── 상별 목표각 + 풍속 중재 + 전환 판정 (docstring 5) ─────────
                 if phase == "patrol":

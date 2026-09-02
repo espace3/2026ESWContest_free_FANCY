@@ -28,17 +28,37 @@ _REGION_COLORS = {"head": (60, 180, 255), "upper": (0, 200, 60), "lower": (0, 12
 
 
 def chest_point(keypoints: list[dict], conf_thr: float) -> dict:
-    """선정된 사람의 '가슴' 조준점(정규화 cx/cy) = 어깨 중점. 한쪽 어깨만 잡히면
-    그쪽, 둘 다 없으면 코 폴백, 그것도 없으면 visible=False."""
-    pts = [(keypoints[i]["x"], keypoints[i]["y"])
-           for i in (_L_SHOULDER, _R_SHOULDER) if keypoints[i]["conf"] >= conf_thr]
-    if pts:
-        return {"cx": sum(p[0] for p in pts) / len(pts),
-                "cy": sum(p[1] for p in pts) / len(pts), "visible": True}
+    """선정된 사람의 '가슴' 조준점(정규화 cx/cy) = 어깨 중점.
+
+    paired 는 "cx 를 몸의 좌우 중심으로 믿어도 되는가"다. 한쪽 어깨만 잡히면
+    cx 가 어깨폭의 절반만큼 그쪽으로 치우친다 — 1m·Wide(102°) 기준 약 8°라,
+    사람이 가만히 있어도 팬 명령이 나가고 이동 감지 문턱(move_thr_deg 8°)까지
+    넘겨 재조준 상태로 빠진다 (2026-09-02, 하체→상체 전환 때 팬이 움직이는
+    증상). 어깨는 카메라가 아래를 볼 때 프레임 가장자리에서 한쪽만 살아남기
+    쉬워서 드문 상황이 아니다.
+
+    그래서 한쪽 어깨뿐일 때는 코가 보이면 cx 만 코에서 가져온다 — 코의 좌우
+    편차는 머리폭 절반이라 어깨폭 절반의 절반 수준이다. 코도 없으면
+    paired=False 로 알려 팬 피드백에서 빼게 한다.
+
+    cy 는 두 어깨 높이가 거의 같으므로 한쪽만 잡혀도 그대로 쓴다 — paired 는
+    팬(수평)에만 걸리는 플래그고 틸트는 영향받지 않는다.
+    """
+    sh = [(keypoints[i]["x"], keypoints[i]["y"])
+          for i in (_L_SHOULDER, _R_SHOULDER) if keypoints[i]["conf"] >= conf_thr]
     nose = keypoints[_NOSE]
-    if nose["conf"] >= conf_thr:
-        return {"cx": nose["x"], "cy": nose["y"], "visible": True}
-    return {"cx": 0.5, "cy": 0.5, "visible": False}
+    has_nose = nose["conf"] >= conf_thr
+    if len(sh) == 2:
+        return {"cx": (sh[0][0] + sh[1][0]) / 2, "cy": (sh[0][1] + sh[1][1]) / 2,
+                "visible": True, "paired": True}
+    if len(sh) == 1:
+        cx, cy = sh[0]
+        if has_nose:
+            return {"cx": nose["x"], "cy": cy, "visible": True, "paired": True}
+        return {"cx": cx, "cy": cy, "visible": True, "paired": False}
+    if has_nose:
+        return {"cx": nose["x"], "cy": nose["y"], "visible": True, "paired": True}
+    return {"cx": 0.5, "cy": 0.5, "visible": False, "paired": False}
 
 
 def _axes_idle(mc) -> bool:

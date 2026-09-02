@@ -219,9 +219,10 @@ class BodyPatrolScenario(FullBodyScenario):
         # 헤드는 가슴을 중앙으로 (부위 조준은 순찰이 한다).
         pan_t, tilt_t = self.body_pan, cur_tilt
         if chest["visible"]:
-            pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
+            if chest["paired"]:   # 한쪽 어깨뿐이면 cx 가 치우쳐 있다 (chest_point 참고)
+                pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
+                self.body_pan = pan_t
             tilt_t = self._ct(cur_tilt + self.gain_tilt * self._tilt_err(chest["cy"]))
-            self.body_pan = pan_t
 
         need = (self.allowed & set(self.SCAN_ORDER)) or {"upper"}
         if need <= self.waypoints.keys():
@@ -288,8 +289,9 @@ class BodyPatrolScenario(FullBodyScenario):
             self._slot_until = obs["t"] + self._slot_len(region, cur_tilt)
 
         pan_t = self.body_pan
-        if obs["chest"]["visible"]:
-            pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(obs["chest"]["cx"]))
+        chest = obs["chest"]
+        if chest["visible"] and chest["paired"]:
+            pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
             self.body_pan = pan_t
         return pan_t, self._aim_tilt(region, obs, cur_tilt)
 

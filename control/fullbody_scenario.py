@@ -224,7 +224,7 @@ class FullBodyScenario:
 
         # 사용자 이동 감지 — 가슴 수평 오차가 크면 재조준
         chest = obs["chest"]
-        if self.state in ("scan", "patrol") and chest["visible"]:
+        if self.state in ("scan", "patrol") and chest["visible"] and chest["paired"]:
             err = self._pan_err(chest["cx"])
             if abs(err) > self.move_thr_deg:
                 self._resume = self._make_resume()
@@ -295,7 +295,7 @@ class FullBodyScenario:
         else:
             down = -1.0 if region == "head" else 1.0   # head는 화면 위쪽, 나머지는 아래쪽
             tilt_t = self._ct(cur_tilt + self.gain_tilt * self.sign_tilt * down * self.blind_deg)
-        if chest["visible"]:
+        if chest["visible"] and chest["paired"]:
             pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
             self.body_pan = pan_t
         return pan_t, tilt_t
@@ -321,7 +321,7 @@ class FullBodyScenario:
             if abs(et) < self.converge_deg:   # 보이는 동안 기억 경로를 서서히 최신화
                 wp["tilt"] += self.trim_alpha * (tilt_t - wp["tilt"])
                 wp["estimated"] = False
-        elif chest["visible"]:
+        elif chest["visible"] and chest["paired"]:
             pan_t = self._cp(cur_pan + self.gain_pan * self._pan_err(chest["cx"]))
             self.body_pan = pan_t
 
@@ -342,9 +342,14 @@ class FullBodyScenario:
                 self._enter_search("재조준 중 가슴 상실")
             return self.body_pan, cur_tilt
         self._recenter_miss = 0
-        ep, et = self._pan_err(chest["cx"]), self._tilt_err(chest["cy"])
+        tilt_t = self._ct(cur_tilt + self.gain_tilt * self._tilt_err(chest["cy"]))
+        if not chest["paired"]:
+            # cx 가 한쪽 어깨로 치우쳐 있다 — 그 값으로 수렴을 판정하면 어깨폭
+            # 절반만큼 틀어진 자리를 "중앙"으로 확정한다. 팬은 그대로 두고
+            # 두 어깨(또는 코)가 다시 잡힐 때까지 판정을 미룬다.
+            return self.body_pan, tilt_t
+        ep = self._pan_err(chest["cx"])
         pan_t = self._cp(cur_pan + self.gain_pan * ep)
-        tilt_t = self._ct(cur_tilt + self.gain_tilt * et)
         self.body_pan = pan_t
         if abs(ep) < self.converge_deg:
             moved = abs(pan_t - self._recenter_from)

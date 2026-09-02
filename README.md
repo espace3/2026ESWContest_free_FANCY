@@ -55,16 +55,28 @@
 ## 5. 저장소 구조
 
 ```
-README.md               ← 프로젝트 전체 안내
-lib/                    ← Dart 소스
-  main.dart               앱 진입점
-  app.dart                앱 루트 위젯 · 라우팅
-  pages/                  화면 (홈 · BLE 스캔 · 기본 모드 · 타겟 모드)
-  services/               상태 관리, BLE 연결/프로토콜
-  widgets/                공용 위젯
-android/ ios/           ← 플랫폼별 러너 프로젝트
-test/                   ← 위젯 테스트
-release/                ← 배포용 APK
+lib/
+  main.dart                    진입점 — 상태 초기화 후 앱 실행
+  app.dart                     앱 루트 위젯 · 테마 · 스와이프 설정
+
+  pages/                       화면 — 표시·입력만, 상태는 services/가 소유
+    home_page.dart               홈 화면. 전원 버튼, 기본 ↔ 타겟 모드 전환
+    ble_scan_page.dart           BLE 스캔·연결 디버그 화면
+    basic_mode_page.dart         기본 모드 — 고정/회전 + 바람 세기
+    target_mode_page.dart        타겟 모드 — 인식 상태 표시, 풍량, 부위별 세기
+
+  services/                    앱 전역 상태 (싱글턴)
+    fan_state_service.dart       설정 주체 — 전원/모드/풍량 보관·영속화·전송·검증
+    ble/
+      ble_protocol.dart          GATT 계약 — UUID·바이트 형식·스냅샷 파싱 (RPi와 공유)
+      ble_connection_service.dart  BLE 연결 — 재시도, write/에코백, 자동 재연결
+
+  widgets/
+    wind_strength_selector.dart  바람 세기(정지·1~3단) 선택 위젯 — 공용
+
+android/ ios/                  플랫폼별 러너 프로젝트 (앱 ID com.esw.fan)
+test/widget_test.dart          위젯 테스트 — 전원·모드 전환, 재전송 계약
+my_app/release/esw-fan-v1.0.apk  배포용 APK
 ```
 
 ## 6. 실행 방법

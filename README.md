@@ -1,4 +1,4 @@
-# AI 스마트 타겟 선풍기
+# 개인 맞춤형 스마트 선풍기
 
 [![시연 영상](https://img.youtube.com/vi/irIeIDBcQD0/maxresdefault.jpg)](https://youtu.be/irIeIDBcQD0)
 

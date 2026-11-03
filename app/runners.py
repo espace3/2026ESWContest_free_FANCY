@@ -10,7 +10,7 @@ app/runners.py - 모드별 러너 팩토리 + 모드 감독
   ModeSupervisor 전원·모드·풍속 → 러너 선택, 스레드 교대(stop → 감속 → join → start).
 
   _make_runner       타겟 모드(0x02) 추적       카메라 O
-  _make_body_runner  부위 모드(0x03) 순찰·폴백   카메라 O
+  _make_body_runner  부위 모드(0x03) 부위 순환 추적 카메라 O
   _make_sweeper      기본-회전 모드(0x01) 스윕    카메라 X
   _make_homer        복귀 후 대기 (고정·파킹)     카메라 X
 
@@ -32,21 +32,17 @@ from pathlib import Path
 # 레포 루트를 path에 추가 (config / vision / control / hardware / app 해결용)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import cv2
-
 from dbus_fast.constants import MessageType
 from dbus_fast.message import Message
 
 from config import CFG, TARGET_MODES
-from control.region_patrol import RegionPatrolScenario, MotionGate, region_wind_level
-from control.control_signal import (apply_deadzone, clamp_angle,
-                                              compute_pan_angle,
-                                              compute_tilt_angle)
+from control.region_patrol import RegionPatrolScenario, region_wind_level
+from control.control_signal import apply_deadzone
 from control.recognition_report import RecognitionReporter
 from vision.region_filter import RegionFilter
 from vision.target_select import (DEFAULT_MATCH_RADIUS, person_center,
                                     select_target)
-from app.tracking import (_INVISIBLE, LatencyStat, _axes_idle, _draw_overlay,
+from app.tracking import (_INVISIBLE, LatencyStat, _draw_overlay,
                           chest_point, run_tracking)
 from app.camera import _open_cam_retry, _read_frame, _release_cam_pause
 
@@ -80,14 +76,6 @@ class _ReportingDetector:
 
     def __getattr__(self, name):
         return getattr(self._d, name)   # 나머지 속성/메서드는 원본에 위임
-
-
-
-def fan_level_txt(levels, scenario, phase, common_level) -> str:
-    """상태 로그용 — 지금 릴레이에 적용 중인 세기 표기."""
-    lv = (common_level if phase == "fallback"
-          else region_wind_level(scenario, levels, common_level))
-    return f"{lv}단" if lv else "정지"
 
 
 
@@ -179,24 +167,17 @@ def _make_homer(mc, home_pan: bool):
 
 
 def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_state):
-    """부위 모드(0x03) 러너 — 내부 2상(순찰↔추적 폴백) 단일 세션 (docstring 5).
+    """부위 모드(0x03) 러너 — 부위 순환 추적 단일 세션 (main.py docstring 5).
 
-    전신 추적 루프를 세션형(stop_event)으로 옮기고 풍속 중재
-    (region_wind_level)·MotionGate 전환·유효 모드/인식 보고를 더했다.
-    시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자 위치·거리가
-    달라졌을 수 있어서인데, 직접 매핑이라 다시 잡는 비용이 한 프레임이다.
+    추론·대상 선정·스무딩은 타겟 모드(run_tracking)와 같은 순서로 하고, 조준점만
+    "지금 겨누는 부위"로 바꾼다 (control/region_patrol.py). 풍속은 그 부위의
+    저장 세기다. 시나리오는 세션마다 새로 만든다 — 모드를 떠났다 돌아오면 사용자
+    위치·자세가 달라졌을 수 있어서다.
     gains=(pan, tilt)는 main에서 미리 캡처한 값을 그대로 받는다.
     """
     fov = CFG["fov"]
     fov_h, fov_v = fov["h"], fov["v"]
     gain_pan, gain_tilt = gains
-    # 재조준·탐색은 부모가 수렴 판정으로 진행을 막으므로, 그 구간에서만
-    # 데드존을 gain x converge_deg 아래로 좁힌다 (순찰은 시간 슬롯이라
-    # 도착 판정이 없어 사용자 데드존을 그대로 써도 갇히지 않는다).
-    conv_dz_pan = min(args.body_deadzone_pan, 0.5 * gain_pan * args.body_converge)
-    conv_dz_tilt = min(args.body_deadzone_tilt, 0.5 * gain_tilt * args.body_converge)
-    sign_pan = -1.0 if args.invert_pan else 1.0
-    sign_tilt = -1.0 if args.invert_tilt else 1.0
 
     def _region_levels():
         b = service.body_levels  # BLE 스레드가 갱신하는 dict — int 읽기는 원자적
@@ -210,22 +191,10 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
             invert_pan=args.invert_pan, invert_tilt=args.invert_tilt,
             target_cx=args.target_cx, target_cy=args.target_cy,
             dwell_s=args.body_dwell,
-            converge_deg=args.body_converge,
-            map_timeout_s=args.body_map_timeout,
-            # 시나리오 자체 이동 감지(recenter)는 게이트보다 둔하게 — 게이트가
-            # 1차 판정자다 (docstring 5의 "이동 감지 우선순위" 참고).
-            move_thr_deg=args.body_move_thr,
-            rescan_thr_deg=args.body_rescan_thr,
-            # 조준 편향: 머리는 위로, 상체는 아래로 — 부위 간 틸트 간격 확대
-            # 조준 보정은 각도가 아니라 측정 간격의 배수 — 거리 자동 대응.
-            aim_ratio={"head": args.body_head_ratio,
-                       "upper": args.body_upper_ratio},
-            spread_ratio=args.body_spread_ratio,
-            tilt_rate_dps=args.body_tilt_rate)
-        gate = MotionGate(args.body_exit_deg, args.body_exit_window,
-                          args.body_still_s, args.body_still_deg)
+            arrive_deg=args.body_arrive,
+            travel_max_s=args.body_travel_max,
+            lost_s=args.body_lost_s)
         tracker.reset()  # 이전 세션의 스무딩 잔재 제거
-        phase = "patrol"
         service.report_effective(0x03)
         prev_center = None
         last_pan, last_tilt = mc.current_position()
@@ -234,9 +203,8 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         resp = LatencyStat("영상 처리 지연(프레임→모터 명령)")
         t_prev = time.time()
         last_log = 0.0
-        print(f"[E2E] 부위 순찰 세션 시작 (매핑 + 시간 슬롯) — 조준 배수 "
-              f"머리 {args.body_head_ratio:g} 상체 {args.body_upper_ratio:g} "
-              f"최소간격 {args.body_spread_ratio:g} (측정 간격 대비)")
+        print(f"[E2E] 부위 순환 추적 시작 — 체류 {args.body_dwell:g}s, "
+              f"도착 ±{args.body_arrive:g}° (최대 이동 {args.body_travel_max:g}s)")
         try:
             while not stop_event.is_set():
                 t0 = time.time()
@@ -277,73 +245,28 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                 cur_pan, cur_tilt = mc.current_position()
                 levels = _region_levels()
                 scenario.allowed = {r for r, lv in levels.items() if lv > 0}
-                scenario.levels = levels   # 세기 0인 부위는 체류 없이 지나간다
-                # 조준점은 화면 중앙이 아니라 --target-cx/cy 다. 카메라 렌즈와
-                # 송풍구가 같은 높이가 아니라 렌즈를 정확히 맞추면 바람은 어긋난다
-                # — cy 를 0.5 에서 옮겨 그 차이를 보정한다.
-                # paired=False(한쪽 어깨만)면 cx 가 어깨폭 절반만큼 치우쳐 있어
-                # 팬 기준으로 못 쓴다 — 오차 0으로 두어 팬을 유지한다 (chest_point 참고).
-                chest_err = (sign_pan * compute_pan_angle(chest["cx"] - (args.target_cx - 0.5), fov_h)
-                             if chest["visible"] and chest["paired"] else 0.0)
+                scenario.levels = levels
 
-                # ── 상별 목표각 + 풍속 중재 + 전환 판정 (docstring 5) ─────────
-                if phase == "patrol":
-                    pan_t, tilt_t = scenario.step({
-                        "t": t0, "pos": (cur_pan, cur_tilt), "idle": _axes_idle(mc),
-                        "target_idx": target_idx, "chest": chest,
-                        "regions": smoothed, "fresh": fresh,
-                    })
-                    for ev in scenario.events:
-                        print(f"\n[E2E] {ev}")
-                    fan.set_speed(region_wind_level(scenario, levels,
-                                                  service.common_level))
-                    if gate.update_patrol(t0, cur_pan, scenario.state == "patrol"):
-                        phase = "fallback"
-                        gate.reset_fallback()
-                        service.report_effective(0x02)
-                        print("\n[E2E] 이동 감지 → 추적 폴백 (정지하면 순찰 재개)")
-                else:
-                    if chest["visible"]:
-                        et = sign_tilt * compute_tilt_angle(chest["cy"] - (args.target_cy - 0.5), fov_v)
-                        pan_t = clamp_angle(cur_pan + gain_pan * chest_err,
-                                            args.pan_min, args.pan_max)
-                        tilt_t = clamp_angle(cur_tilt + gain_tilt * et,
-                                             args.tilt_min, args.tilt_max)
-                    else:
-                        pan_t, tilt_t = last_pan, last_tilt  # 미관측 — 조준 유지
-                    # 유효 모드가 추적(0x02)이므로 풍속도 추적 모드와 동일한
-                    # 공용 세기(앱 타겟 화면 표시값)를 쓴다 — 리모컨 주체 일관.
-                    fan.set_speed(service.common_level)
-                    if gate.update_fallback(t0, cur_pan, chest["visible"]):
-                        phase = "patrol"
-                        gate.reset_patrol()
-                        service.report_effective(0x03)
-                        print("\n[E2E] 정지 감지 → 부위 순찰 재개")
+                # ── 조준 (두 축 모두 지금 부위) + 풍속 ──
+                cmd = scenario.step({
+                    "t": t0, "pos": (cur_pan, cur_tilt),
+                    "target_idx": target_idx, "chest": chest,
+                    "regions": smoothed, "fresh": fresh,
+                })
+                for ev in scenario.events:
+                    print(f"\n[E2E] {ev}")
+                fan.set_speed(region_wind_level(scenario, levels, service.common_level))
 
-                # 데드존은 원래 목적(포즈 잡음이 모터로 새는 것 차단)대로
-                # 쓴다. 순찰이 시간 슬롯이라 도착 판정이 없어져, 데드존이
-                # 남기는 정지 오차가 진행을 막지 않는다. 다만 재조준·탐색은
-                # 부모가 여전히 수렴으로 판정하므로 그때만 좁힌다.
-                converging = scenario.state in ("recenter", "search")
-                # 팬은 순찰에서도 사용자 데드존을 쓴다(1.0° — 사각지대 3.3°).
-                # 한때 2.0°였던 건 하체→상체 전환에서 팬이 따라 움직이는 것을
-                # 막기 위해서였는데, 그 원인은 잡음이 아니라 한쪽 어깨만 잡힌
-                # 프레임의 cx 도약이었다 — chest_point 의 paired 로 원인을 막은
-                # 뒤 되돌렸다 (a6a41b4). 넓은 데드존은 도약을 근거리에서 막지도
-                # 못하면서(1.3m 이내) 상시 조준 오차만 6.7° 로 키웠다.
-                pan_g = apply_deadzone(pan_t, last_pan,
-                                       conv_dz_pan if converging else args.body_deadzone_pan)
-                # 틸트는 순찰도 좁힌다 — 조준이 연속 피드백(현재각 + gain x 오차)
-                # 이라 넓은 데드존은 오차 < 데드존/gain 에서 명령을 통째로 막아
-                # 그만큼 못 미친 채 세운다 (1.0/0.2 = 5°). 좁히면 1.25°.
-                tilt_g = apply_deadzone(
-                    tilt_t, last_tilt,
-                    conv_dz_tilt if (converging or scenario.state == "patrol")
-                    else args.body_deadzone_tilt)
-                if not stop_event.is_set() and (pan_g, tilt_g) != (last_pan, last_tilt):
-                    mc.move_to(pan_g, tilt_g)
-                    last_pan, last_tilt = pan_g, tilt_g
-                    resp.add((time.time() - t0) * 1000.0)
+                # 데드존은 포즈 잡음이 모터로 새는 것을 막는다. 명령 변화량이
+                # gain x 오차라 데드존/gain 만큼 정지 오차가 남는다 —
+                # 팬 1.0/0.3 = 3.3°, 틸트 0.25/0.2 = 1.25°.
+                if cmd is not None:
+                    pan_g = apply_deadzone(cmd[0], last_pan, args.body_deadzone_pan)
+                    tilt_g = apply_deadzone(cmd[1], last_tilt, args.body_deadzone_tilt)
+                    if not stop_event.is_set() and (pan_g, tilt_g) != (last_pan, last_tilt):
+                        mc.move_to(pan_g, tilt_g)
+                        last_pan, last_tilt = pan_g, tilt_g
+                        resp.add((time.time() - t0) * 1000.0)
 
                 # ── FPS/로그/프레임 송출 ─────────────────────────────────────
                 dt = time.time() - t_prev
@@ -353,11 +276,11 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     fps_hist.pop(0)
                 fps = sum(fps_hist) / len(fps_hist)
                 if time.time() - last_log >= 1.0:
-                    tag = scenario.state if phase == "patrol" else "fallback"
-                    print(f"\r[{time.strftime('%H:%M:%S')}] body:{tag:<8} "
+                    lv = region_wind_level(scenario, levels, service.common_level)
+                    print(f"\r[{time.strftime('%H:%M:%S')}] body:{scenario.state:<5} "
                           f"rg={scenario.active_region():<5} pan={cur_pan:+7.2f}° "
                           f"tilt={cur_tilt:+6.2f}° "
-                          f"wind={fan_level_txt(levels, scenario, phase, service.common_level)} "
+                          f"wind={f'{lv}단' if lv else '정지'} "
                           f"fps={fps:4.1f} resp={resp.p50():3.0f}ms  ",
                           end="", flush=True)
                     last_log = time.time()
@@ -365,14 +288,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                     vis = _draw_overlay(frame, people, target_idx, smoothed, fresh,
                                         scenario, last_pan, last_tilt, fps,
                                         target_cx=args.target_cx,
-                                        target_cy=args.target_cy,
-                                        aim_bias_deg=scenario.aim_ratio.get(
-                                            scenario.active_region(), 0.0)
-                                        * scenario.gap_deg,
-                                        fov_v=fov_v)
-                    if phase == "fallback":
-                        cv2.putText(vis, "FALLBACK (tracking)", (10, 72),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 80, 255), 2)
+                                        target_cy=args.target_cy)
                     web_state.update(vis)
                 stop_event.wait(max(0.0, 0.02 - (time.time() - t0)))
         finally:
@@ -396,7 +312,7 @@ class ModeSupervisor:
 
     ── 러너 선택 ────────────────────────────────────────────────────────────
       전원 OFF          → park   (0°,0° 파킹)
-      0x03 + body_fn    → body   (부위 순찰)
+      0x03 + body_fn    → body   (부위 순환 추적)
       0x02 / 0x03       → track  (가슴 추적)
       0x01 + 풍속 ≥1    → sweep  (좌우 왕복)
       그 외             → home   (틸트만 0° 복귀 후 대기)

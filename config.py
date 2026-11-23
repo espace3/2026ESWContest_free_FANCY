@@ -84,7 +84,7 @@ CFG: dict = {
             "dir_for_positive": 0,
             "f_start": 800,
             "f_max": 7000,
-            "ramp_segments": 12,
+            "ramp_segments": 10,
             "ramp_steps_per_seg": 60,
         },
         "tilt": {
@@ -92,7 +92,7 @@ CFG: dict = {
             "dir_for_positive": 0,
             "f_start": 800,
             "f_max": 6000,
-            "ramp_segments": 12,
+            "ramp_segments": 10,
             "ramp_steps_per_seg": 60,
         },
     },

@@ -529,6 +529,55 @@ def _release_cam_pause(cam, backend):
     time.sleep(0.3)
 
 
+class CameraLease:
+    """러너 사이에서 카메라 세션을 넘겨주는 보관함 (2026-11-23).
+
+    카메라를 쓰는 러너(타겟·부위)끼리 전환할 때는 카메라를 닫지 않고 다음
+    러너에 그대로 넘긴다. 예전에는 러너가 끝날 때마다 카메라를 닫고 새 러너가
+    다시 열어서, rpicam-vid 재기동(약 1 s) 동안 헤드가 멈췄다.
+
+    카메라를 쓰지 않는 러너(회전·고정·파킹)로 넘어갈 때는 ModeSupervisor 가
+    release()로 닫는다. rpicam-vid 는 아무도 읽지 않으면 파이프가 차서 캡처가
+    멎으므로(_make_runner docstring), 읽는 사람 없이 열어 둔 채 쉬면 안 된다.
+    넘겨주는 동안은 join → 새 러너 시작까지 수 ms 라 이 문제가 생기지 않고,
+    새 러너의 첫 읽기가 밀린 데이터를 버리고 최신 프레임만 가져간다
+    (_RpicamVidCamera.read_jpeg).
+    """
+
+    def __init__(self, args) -> None:
+        self._args = args
+        self._cam = None
+        self._backend = None
+        self._lock = threading.Lock()
+
+    def _alive(self) -> bool:
+        if self._backend == "rpicam":
+            return self._cam.proc.poll() is None
+        return True
+
+    def acquire(self):
+        """열린 카메라가 있으면 그대로, 없거나 죽었으면 새로 열어 반환한다."""
+        with self._lock:
+            if self._cam is not None and not self._alive():
+                print("[camera] 넘겨받을 카메라가 종료돼 있음 — 다시 연다")
+                _release_camera(self._cam, self._backend)
+                self._cam = self._backend = None
+                time.sleep(0.3)
+            if self._cam is None:
+                self._cam, self._backend = _open_cam_retry(self._args)
+            else:
+                print(f"[camera] 이전 세션의 카메라를 이어서 사용 (backend={self._backend})")
+            return self._cam, self._backend
+
+    def release(self) -> None:
+        """카메라를 닫는다. 이미 닫혀 있으면 아무것도 안 한다."""
+        with self._lock:
+            if self._cam is None:
+                return
+            _release_cam_pause(self._cam, self._backend)
+            self._cam = self._backend = None
+
+
 def _window_viewer(web_state, stop_event) -> None:
     """cv2 창 표시 전담 스레드 (프로세스에서 유일하게 cv2 GUI를 부르는 곳).
 

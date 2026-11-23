@@ -50,7 +50,8 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
          마지막 머리/상체 조준 각도로 돌아가 기다린다(하체를 겨누다 놓쳐
          바닥만 보는 상태 방지).
      부위 러너는 --axis와 무관하게 팬+틸트를 모두 쓴다.
-     0x02↔0x03 은 러너가 달라 카메라 세션이 재시작된다.
+     0x02↔0x03 은 러너가 다르지만 카메라는 닫지 않고 넘겨주며 감속 정지도
+     생략한다 (app/runners.py ModeSupervisor "카메라 넘겨주기").
   6. notify 스레드 규칙 — 러너 스레드는 report_effective/report_recognized로
      보고하고, 서비스가 loop.call_soon_threadsafe로 BLE asyncio 루프에 넘긴다
      (dbus_fast는 스레드 안전하지 않음). 객체 인식 Status [0x02, x]는 인식
@@ -101,7 +102,7 @@ from vision.pose_estimate import MoveNetMultiPoseDetector
 from vision.region_filter import RegionFilter
 from app.tracking import (LatencyStat, add_state_args, open_motor_from_args,
                           _DryRelay)
-from app.camera import (_WebStreamState, _make_handler, _ThreadedHTTP,
+from app.camera import (CameraLease, _WebStreamState, _make_handler, _ThreadedHTTP,
                         _window_viewer)
 from app.runners import (ModeSupervisor, _ReportingDetector, _make_body_runner,
                          _make_homer, _make_runner, _make_sweeper,
@@ -496,17 +497,20 @@ def main() -> None:
                 body_gains = (args.gain_pan, args.gain_tilt)
                 # 일반 타겟 모드(0x02)도 인식 상태를 보고하도록 디텍터를 감싼다.
                 reporting_detector = _ReportingDetector(detector)
+                cam_lease = CameraLease(args)  # 카메라 러너끼리 카메라를 넘겨준다
                 track_fn = _make_runner(args.axis, reporting_detector, tracker,
-                                        mc, args, web_state)
+                                        mc, args, web_state, cam_lease)
                 supervisor = ModeSupervisor(track_fn, _make_sweeper(mc, args),
                                                _make_homer(mc, home_pan=False),
                                                _make_homer(mc, home_pan=True),
                                                stop_fn=mc.stop,
-                                               web_state=web_state)
+                                               web_state=web_state,
+                                               camera_lease=cam_lease)
                 service = EswFanService(supervisor, fan)
                 # 부위 러너와 인식 보고기는 서비스의 report_*를 쓰므로 나중에 연결.
                 supervisor.set_body_runner(_make_body_runner(
-                    detector, tracker, mc, fan, service, body_gains, args, web_state))
+                    detector, tracker, mc, fan, service, body_gains, args, web_state,
+                    cam_lease))
                 reporting_detector.attach(service)
 
                 print(f"[E2E] axis={args.axis} — BLE 전원/모드/풍량 명령 대기 중.")

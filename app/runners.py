@@ -44,7 +44,7 @@ from vision.target_select import (DEFAULT_MATCH_RADIUS, person_center,
                                     select_target)
 from app.tracking import (_INVISIBLE, LatencyStat, _draw_overlay,
                           chest_point, run_tracking)
-from app.camera import _open_cam_retry, _read_frame, _release_cam_pause
+from app.camera import _read_frame
 
 
 class _ReportingDetector:
@@ -79,15 +79,16 @@ class _ReportingDetector:
 
 
 
-def _make_runner(axis, detector, tracker, mc, args, web_state):
+def _make_runner(axis, detector, tracker, mc, args, web_state, lease):
     """axis에 맞는 app/tracking.py 루프를 stop_event 하나만 받는 콜러블로 감싼다.
 
-    카메라는 세션(스레드)마다 새로 열고 끝나면 반드시 해제한다 — 특히
-    rpicam-vid(기본) 백엔드는 아무도 읽지 않는 동안 파이프 버퍼가 차서 캡처
-    자체가 멎어버리는 게 실기로 확인됐다. "기본 모드"로 쉬는 동안 카메라를
-    계속 열어두면 재진입 시 그 멎은 상태(화면 정지) 그대로 남는다 — 매번
-    새로 열면 이 문제를 피한다. 오픈·해제 자체는 app/camera.py 의
-    _open_cam_retry / _release_cam_pause 가 한다 (부위 러너와 공용).
+    카메라는 lease(app/camera.py CameraLease)에서 받는다. rpicam-vid(기본)
+    백엔드는 아무도 읽지 않는 동안 파이프 버퍼가 차서 캡처 자체가 멎어버리는
+    게 실기로 확인됐다 — "기본 모드"로 쉬는 동안 카메라를 열어두면 재진입 시
+    그 멎은 상태(화면 정지) 그대로 남는다. 그래서 카메라를 안 쓰는 러너로
+    넘어갈 때는 ModeSupervisor 가 lease 를 닫고, 타겟 ↔ 부위처럼 카메라를 쓰는
+    러너끼리는 닫지 않고 넘겨준다 (2026-11-23, 재기동 ~1 s 정지 제거).
+    러너가 예외로 끝나면 카메라 상태를 믿을 수 없으므로 닫는다.
     """
     fov_cfg = CFG["fov"]
     fov_h, fov_v = fov_cfg["h"], fov_cfg["v"]
@@ -97,14 +98,15 @@ def _make_runner(axis, detector, tracker, mc, args, web_state):
     aim_key = args.region if (axis == "tilt" and args.region != "chest") else "upper"
 
     def _run(stop_event):
-        cam, backend = _open_cam_retry(args)
+        cam, backend = lease.acquire()
         try:
             run_tracking(cam, backend, detector, tracker, mc, args, stop_event,
                          axis=axis, fov_h=fov_h, fov_v=fov_v,
                          sign_pan=sign_pan, sign_tilt=sign_tilt,
                          aim_key=aim_key, web_state=web_state)
-        finally:
-            _release_cam_pause(cam, backend)
+        except BaseException:
+            lease.release()
+            raise
 
     return _run
 
@@ -166,7 +168,7 @@ def _make_homer(mc, home_pan: bool):
     return _run
 
 
-def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_state):
+def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_state, lease):
     """부위 모드(0x03) 러너 — 부위 순환 추적 단일 세션 (main.py docstring 5).
 
     추론·대상 선정·스무딩은 타겟 모드(run_tracking)와 같은 순서로 하고, 조준점만
@@ -184,7 +186,7 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
         return {"head": b[0x01], "upper": b[0x02], "lower": b[0x03]}
 
     def _run(stop_event):
-        cam, backend = _open_cam_retry(args)
+        cam, backend = lease.acquire()
         scenario = RegionPatrolScenario(
             fov_h, fov_v, args.pan_min, args.pan_max, args.tilt_min, args.tilt_max,
             gain_pan=gain_pan, gain_tilt=gain_tilt,
@@ -291,18 +293,28 @@ def _make_body_runner(detector, tracker, mc, fan, service, gains, args, web_stat
                                         target_cy=args.target_cy)
                     web_state.update(vis)
                 stop_event.wait(max(0.0, 0.02 - (time.time() - t0)))
+        except BaseException:
+            lease.release()   # 예외 종료 — 카메라 상태를 믿을 수 없으므로 닫는다
+            raise
         finally:
             # 러너 소유 종료 — 릴레이를 0으로 놓고 나가면, 서비스가 join 후
-            # 다음 상태를 재적용한다 (docstring 7).
+            # 다음 상태를 재적용한다 (docstring 7). 카메라는 닫지 않는다 —
+            # 다음 러너가 카메라를 쓰면 넘겨주고, 아니면 ModeSupervisor 가 닫는다.
             print(f"\n[측정] {resp.summary()}")
             fan.set_speed(0)
-            _release_cam_pause(cam, backend)
 
     return _run
 
 
 class ModeSupervisor:
     """전원·모드·풍속 → 러너 하나. 상태가 바뀌면 스레드를 갈아끼운다.
+
+    ── 카메라 넘겨주기 ───────────────────────────────────────────────────────
+    camera_lease 가 있으면 카메라를 쓰는 러너(track·body)끼리 전환할 때 카메라를
+    닫지 않고 넘겨주고, 모터 감속 정지(stop_fn)도 생략한다 — 새 러너가 곧바로
+    다음 목표를 주므로 멈췄다 다시 출발할 이유가 없다. 이전 러너의 명령과
+    섞이지 않는 건 join 이 보장한다. 카메라를 안 쓰는 러너로 넘어갈 때만
+    카메라를 닫는다 (app/camera.py CameraLease).
 
     ── 왜 "아무것도 안 함"도 러너인가 ────────────────────────────────────────
     기본-고정(0x00)이나 전원 OFF에서도 _make_homer 러너가 돈다(한 번 움직이고
@@ -323,7 +335,7 @@ class ModeSupervisor:
     """
 
     def __init__(self, track_fn, sweep_fn, home_fn, park_fn, stop_fn=None,
-                 web_state=None) -> None:
+                 web_state=None, camera_lease=None) -> None:
         self._track_fn = track_fn
         self._sweep_fn = sweep_fn
         self._home_fn = home_fn
@@ -331,6 +343,8 @@ class ModeSupervisor:
         self._body_fn = None       # set_body_runner 로 나중에 주입
         self._stop_fn = stop_fn    # 모터 감속 정지 (러너 교체 직전 호출)
         self._web_state = web_state
+        self._lease = camera_lease
+        self._camera_fns = {track_fn}  # 카메라를 쓰는 러너 (body 는 주입 시 추가)
         self._run_fn = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -341,6 +355,7 @@ class ModeSupervisor:
     def set_body_runner(self, body_fn) -> None:
         """부위 러너 주입 — 서비스의 report_* 를 쓰므로 서비스보다 늦게 만들어진다."""
         self._body_fn = body_fn
+        self._camera_fns.add(body_fn)
 
     def _select_runner(self):
         if not self._power_on:
@@ -375,11 +390,14 @@ class ModeSupervisor:
         if (run_fn is self._run_fn and self._thread is not None
                 and self._thread.is_alive() and not self._stop_event.is_set()):
             return
+        handoff = (self._lease is not None and run_fn in self._camera_fns
+                   and self._run_fn in self._camera_fns)
         if self._thread is not None and self._thread.is_alive():
             # 이전 러너가 다음 틱까지 새 목표를 던지지 못하도록 먼저 중단
-            # 신호와 모터 감속 정지를 전달한 뒤 join 한다.
+            # 신호와 모터 감속 정지를 전달한 뒤 join 한다. 카메라 러너끼리의
+            # 전환(handoff)이면 감속 없이 이어간다 (docstring "카메라 넘겨주기").
             self._stop_event.set()
-            if self._stop_fn is not None:
+            if self._stop_fn is not None and not handoff:
                 self._stop_fn()
             print("[E2E] 이전 러너 스레드 정리 중...")
             self._thread.join(timeout=15)
@@ -390,6 +408,8 @@ class ModeSupervisor:
                 print("[E2E] 이전 스레드가 아직 안 끝남 — 이번 시작은 건너뜁니다 "
                       "(모드를 다시 토글해 보세요)")
                 return
+        if self._lease is not None and run_fn not in self._camera_fns:
+            self._lease.release()
         self._run_fn = run_fn
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._thread_main,
@@ -407,6 +427,8 @@ class ModeSupervisor:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=timeout)
+        if self._lease is not None:
+            self._lease.release()
 
 
 async def _watch_disconnects(bus, service) -> None:

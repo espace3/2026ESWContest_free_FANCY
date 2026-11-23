@@ -59,5 +59,5 @@
 |---|---|
 | `control/control_signal.py` | `compute_pan_angle` / `compute_tilt_angle` / `clamp_angle` / `apply_deadzone` |
 | `app/tracking.py` | 닫힌 루프 본문 `run_tracking(axis=...)` — pan / tilt / pantilt 공용 |
-| `control/region_patrol.py` | 같은 식으로 조준 대상을 "지금 겨누는 부위"로 바꿔 부위를 돌아가며 추적 |
+| `control/region_patrol.py` | 위 원리를 전신 순찰 상태기계로 확장 |
 | `config.py` `"fov"` / `"limits"` | 환산 상수와 소프트 리밋 |

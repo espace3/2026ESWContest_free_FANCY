@@ -9,7 +9,7 @@ app/tracking.py - 팬/틸트 닫힌 루프 공유 모듈
 app/runners.py 의 _make_runner 가 BLE "타겟 모드" 명령에 맞춰 이 함수를 백그라운드
 스레드로 시작/정지시킨다 (stop_event.set() 후 join).
 
-여기 있는 것: run_tracking(닫힌 루프 본문), chest_point/_draw_overlay
+여기 있는 것: run_tracking(닫힌 루프 본문), chest_point/_axes_idle/_draw_overlay
 (부위 러너와 공용 헬퍼), _DryMotor/_DryRelay(--dry-run 스텁), 모터 핸들 열기와
 상태파일 CLI 인자.
 """
@@ -93,47 +93,56 @@ class LatencyStat:
                 f"p95={q(0.95):.1f}ms  max={v[-1]:.1f}ms")
 
 
+def _axes_idle(mc) -> bool:
+    """두 축 모두 목표 도달 + 큐 배출 상태인지 논블로킹 확인 (_DryMotor는 항상 True)."""
+    if not hasattr(mc, "pan"):
+        return True
+    for ax in (mc.pan, mc.tilt):
+        with ax.cond:
+            if not (ax.idle and ax.target_steps == ax.pos_steps):
+                return False
+    return True
+
+
 # ── 시각화 ───────────────────────────────────────────────────────────────────
 
 def _draw_overlay(frame, people, target_idx, smoothed, fresh, scenario,
                   pan_cmd: float, tilt_cmd: float, fps: float,
-                  target_cx: float = 0.5, target_cy: float = 0.5):
-    """부위 모드 화면.
+                  target_cx: float = 0.5, target_cy: float = 0.5,
+                  aim_bias_deg: float = 0.0, fov_v: float = 67.0):
+    """부위 모드 화면. 조준 관련 표시가 셋이다.
 
       시안 십자 + 파선   조준점 (target_cx/cy). 이 자리에 부위를 놓는 것이 목표다.
-      굵은 원            지금 겨누는 부위 (실측). 추정 위치면 굵은 X.
-      가는 원            이번 프레임에 잡힌 나머지 부위.
-      초록 선            겨누는 부위에서 조준점까지 = 남은 오차.
+      노란 짧은 선       조준 편향(aim_ratio x gap)까지 더한 최종 수렴 위치.
+                        편향이 0이면 시안 십자와 겹친다.
+      굵은 원            지금 겨누는 부위. 가는 원은 나머지 부위.
+      초록 선            그 부위에서 최종 수렴 위치까지 = 남은 오차.
     """
     from app.camera import draw_pose   # 순환 import 회피 (run_tracking 과 같은 이유)
     vis = draw_pose(frame, people, target_idx)
     h, w = vis.shape[:2]
     tx, ty = int(target_cx * w), int(target_cy * h)
+    # 조준점 — 시안 십자 + 전체 폭 파선
     cv2.drawMarker(vis, (tx, ty), (0, 210, 230), cv2.MARKER_CROSS, 24, 2)
     for x in range(0, w, 16):
         cv2.line(vis, (x, ty), (min(x + 8, w), ty), (0, 210, 230), 1)
-    for y in range(0, h, 16):
-        cv2.line(vis, (tx, y), (tx, min(y + 8, h)), (0, 210, 230), 1)
+    # 편향까지 더한 실제 수렴 위치 (부위가 여기 오면 멈춘다)
+    ay = int((target_cy + aim_bias_deg / fov_v) * h)
+    if abs(ay - ty) > 2:
+        cv2.line(vis, (tx - 40, ay), (tx + 40, ay), (220, 200, 0), 2)
+        cv2.putText(vis, f"aim{aim_bias_deg:+.1f}deg", (tx + 46, ay + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 200, 0), 1)
     active = scenario.active_region()
     for name, col in _REGION_COLORS.items():
-        if fresh[name] and name != active:
+        if fresh[name]:
             c = (int(smoothed[name]["cx"] * w), int(smoothed[name]["cy"] * h))
-            cv2.circle(vis, c, 6, col, 1)
-    aim = scenario.aim
-    if aim is not None:
-        col = _REGION_COLORS.get(aim["region"], (0, 200, 60))
-        # 추정 위치는 화면 밖일 수 있다 — 테두리에 붙여 방향만 보인다.
-        c = (min(max(int(aim["cx"] * w), 0), w - 1),
-             min(max(int(aim["cy"] * h), 0), h - 1))
-        if aim["estimated"]:
-            cv2.drawMarker(vis, c, col, cv2.MARKER_TILTED_CROSS, 22, 3)
-        else:
-            cv2.circle(vis, c, 14, col, 3)
-        cv2.line(vis, c, (tx, ty), (0, 200, 60), 2)   # 남은 오차
-    label = f"{scenario.state.upper()} region={active}"
-    if aim is not None and aim["estimated"]:
-        label += " (est)"
-    cv2.putText(vis, label, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 210, 230), 2)
+            if name == active:
+                cv2.circle(vis, c, 14, col, 3)
+                cv2.line(vis, c, (c[0], ay), (0, 200, 60), 2)   # 남은 오차
+            else:
+                cv2.circle(vis, c, 6, col, 1)
+    cv2.putText(vis, f"{scenario.state.upper()} region={active}", (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 210, 230), 2)
     cv2.putText(vis, f"pan {pan_cmd:+.1f}deg  tilt {tilt_cmd:+.1f}deg  fps {fps:.1f}",
                 (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 200, 0), 2)
     return vis

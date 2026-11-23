@@ -24,31 +24,41 @@ main.py - 진입점: BLE GATT 서비스 + 전체 조립
        앱이 이 값을 따라가지 않는다. 다르면 앱이 재전송으로 교정).
      notify: 적용된 write마다 에코백 [0x01, char#, 원본...]. 거부된 write는
        에코 없음 — 앱이 타임아웃으로 감지한다. 유효 모드 push(0x03)와 객체
-       인식 Status(0x02)는 부위 러너가 보낸다.
+       인식 Status(0x02)는 부위 러너가 보낸다 — 요청/유효 모드가 갈라지는
+       지점이 거기라서.
   3. 풍량 세기 0(정지)은 공용·부위 어느 대상에도 허용한다. 부위 세 개가 모두
-     0이어도 유효한 설정이며(사용자가 바람만 끈 상태), 그때 부위 러너는 상체
-     조준을 계속하되 릴레이를 돌리지 않는다 — control/region_patrol.py _route 참고.
+     0이어도 유효한 설정이며(사용자가 바람만 끈 상태), 그때 부위 러너는 조준을
+     계속하되 릴레이를 돌리지 않는다 — control/region_patrol.py _route 참고.
   4. 유효 모드(_effective_mode) — 요청 모드(앱이 write한 값)와 별개로 RPi가
-     실제로 돌리는 모드. 예전에는 부위 러너가 사용자 이동 시 추적 폴백(0x02)으로
-     갈라졌으나, 폴백을 없앤 뒤(2026-11-03)로는 부위 러너 시작 시 0x03 을
-     보고할 뿐 갈라지지 않는다. 앱 계약(push 형식)은 그대로 둔다.
+     실제로 돌리는 모드. 부위 러너의 추적 폴백 중에만 갈라진다(아래 5).
   5. 부위 모드(0x03) — 단일 세션 러너(app/runners.py _make_body_runner)가
-     RegionPatrolScenario(control/region_patrol.py)로 돈다.
-       조준: 지금 겨누는 부위의 화면 좌표(cx, cy)를 조준점에 놓도록 **팬·틸트를
-         함께** 움직인다 — 타겟 모드와 같은 피드백 식에 대상만 부위로 바뀐 것.
-         사람이 움직여도 멈추지 않고 그 부위를 따라가며, 부위를 가로·세로
-         그대로 쓰므로 누운 자세도 같은 식으로 다룬다.
-       순환: 세기 1 이상인 부위를 head→upper→lower→upper 순으로 돈다. 슬롯 =
-         이동(조준점 ±--body-arrive 안에 들어오거나 --body-travel-max 경과) +
-         체류(--body-dwell). 도착만 기다리면 데드존 정지 오차에 갇히므로
-         시간 상한을 둔다.
-       보이지 않는 부위: 보이는 부위에서 머리→상체 벡터(측정, EMA)만큼 밀어
-         추정해 그쪽으로 간다 — 카메라가 헤드 위에 있어 하체를 겨누면 머리가,
-         머리를 겨누면 하체가 화면 밖으로 나가기 쉽다.
-       풍속: 지금 겨누는 부위의 저장 세기. 대상 상실 중에는 공용 세기.
-       대상 상실: 타겟 모드처럼 그 자리 대기. --body-lost-s 이상 이어지면
-         마지막 머리/상체 조준 각도로 돌아가 기다린다(하체를 겨누다 놓쳐
-         바닥만 보는 상태 방지).
+     내부 2상으로 돈다.
+       순찰(patrol): RegionPatrolScenario(control/region_patrol.py)가 head→upper→
+         lower 순회(세기 0 부위 제외). 부위 각도는 반복 수렴 스캔이 아니라
+         **한 프레임 직접 매핑**으로 잡고 곧바로 순찰에 들어간다(수직 FOV 67°
+         광각이라 전신이 한 프레임에 담긴다 — 근거는 그쪽 클래스 docstring).
+         풍속은 지금 겨누는 부위의 저장 세기를 쓰고, 겨누는 부위가 없는
+         동안(매핑·탐색·재조준)은 공용 세기 — 아래 폴백과 같은 규칙.
+       추적 폴백(fallback): 순찰 안정 상태에서 최근 --body-exit-window 동안
+         팬 이동량 > --body-exit-deg면 전환 (팬은 사용자를 따라갈 때만 움직여
+         헤드 자체 스윙에 면역 — control/region_patrol.py MotionGate 참고).
+         가슴 중심 조준(타겟 모드와 같은 피드백)에 **공용 세기** 적용
+         (유효 모드가 추적이므로 풍속도 추적 모드와 동일 — 리모컨 주체 일관).
+         팬 각이 --body-still-s 동안 잠잠하면 순찰 재개.
+       이동 감지 우선순위: 시나리오 자체 이동 감지(recenter, --body-move-thr)는
+         게이트(--body-exit-deg)보다 둔하게 둔다 — recenter가 먼저 걸리면 게이트
+         창이 비워져(비 patrol) 폴백이 안 나오고, 작은 흔들림에도 순찰이 자주
+         끊긴다 (실기 2026-08-27). 미세 흔들림은 --body-deadzone-pan/-tilt로 억제한다.
+       조준각과 거리: 부위 조준각은 관측에서 바로 나오므로(순수 각도)
+         거리 보정이 이미 되어 있다. 우리가 더하는 보정(머리를 위로,
+         부위 간 최소 간격)만 고정 각도로 두면 거리에 따라 어긋나므로
+         **측정된 머리↔상체 간격의 배수**로 준다 (--body-head-ratio 등).
+       순찰은 도착 판정 없이 **시간 슬롯**으로 돈다 — 슬롯 = 체류 시간 +
+         이동 시간(추정). 도착 판정을 쓰면 잡음 억제용 데드존이 남기는
+         정지 오차 때문에 그 부위에 갇힌다 (control/region_patrol.py 참고).
+     러너 교체가 아니라 내부 상 전환이라 카메라 세션이 안 끊기고, 전환마다
+     유효 모드 push [0x03, 모드]가 나간다. 폴백 중 가슴을 잃으면 마지막 조준을
+     유지한다(재탐색 스윕은 순찰 상의 search 몫 — 알려진 한계).
      부위 러너는 --axis와 무관하게 팬+틸트를 모두 쓴다.
      0x02↔0x03 은 러너가 달라 카메라 세션이 재시작된다.
   6. notify 스레드 규칙 — 러너 스레드는 report_effective/report_recognized로
@@ -198,7 +208,7 @@ class EswFanService(Service):
 
     @property
     def common_level(self) -> int:
-        """공용 세기 — 부위 러너가 대상 상실 중에 쓴다 (추적 모드와 동일 풍속)."""
+        """공용 세기 — 부위 러너의 추적 폴백이 읽는다 (추적 모드와 동일 풍속)."""
         return self._level
 
     def _set_effective(self, mode: int) -> None:
@@ -384,24 +394,51 @@ def main() -> None:
                    help="회전 모드에서 목표를 실제 위치보다 앞세울 각도 (°). "
                         "모터가 큐를 비워 정지→재기동을 반복하지 않을 만큼이면 "
                         "된다. 스윕 속도는 모터 순항 속도로 고정된다.")
-    # ── 부위 모드 (0x03) — docstring 5, control/region_patrol.py ──
+    # ── 부위 모드 (0x03) — docstring 5. 세부 시나리오 파라미터(수렴/탐색 등)는
+    #    control/region_patrol.py 의 기본값을 그대로 쓴다 ──
     p.add_argument("--body-dwell", type=float, default=2.0,
-                   help="부위 체류 시간 (s) — 도착(또는 최대 이동 시간) 후부터 센다")
-    p.add_argument("--body-arrive", type=float, default=5.0,
-                   help="도착 판정 오차 (° — 두 축 모두 이 안이면 체류 시작). "
-                        "데드존이 남기는 정지 오차(팬 3.3°)보다 커야 한다")
-    p.add_argument("--body-travel-max", type=float, default=3.0,
-                   help="부위 이동 최대 시간 (s) — 사람이 계속 움직여 도착을 못 해도 "
-                        "이 시간이 지나면 체류로 넘어간다")
-    p.add_argument("--body-lost-s", type=float, default=1.0,
-                   help="대상 상실 판정 시간 (s) — 넘으면 마지막 머리/상체 조준 "
-                        "각도로 돌아가 대기")
+                   help="부위 순찰 체류 시간 (s)")
+    p.add_argument("--body-exit-deg", type=float, default=12.0,
+                   help="순찰 중 이동 판정 팬 이동량 (° — 추적 폴백 전환)")
+    p.add_argument("--body-exit-window", type=float, default=3.0,
+                   help="이동 판정 시간창 (s)")
+    p.add_argument("--body-still-s", type=float, default=5.0,
+                   help="폴백 중 순찰 재진입 정지 시간 (s)")
+    p.add_argument("--body-still-deg", type=float, default=3.0,
+                   help="정지 판정 팬 각 범위 (°)")
+    # 부위 간 각도 간격을 부풀리는 보정. 0 이면 각 부위를 조준점(--target-cy)에
+    # 정확히 놓는다 — 기본값이다.
+    # 예전 기본값(머리 1.1 / 상체 0.45)은 서 있는 자세에서만 검증됐다. 그때는
+    # 머리 조준각이 틸트 리밋(-25°)에 잘려 편향이 드러나지 않았는데, 앉으면
+    # 머리가 -10° 근처로 올라와 잘리지 않아 머리보다 8° 위를 겨누고 얼굴이 화면
+    # 밖으로 나갔다 (실기 2026-09-02). 렌즈↔송풍구 높이차 보정은 부위마다 다를
+    # 이유가 없으므로 --target-cy 가 담당한다.
+    p.add_argument("--body-head-ratio", type=float, default=0.0,
+                   help="머리 조준을 위로 올릴 배수 (측정 머리↔상체 간격 대비)")
+    p.add_argument("--body-upper-ratio", type=float, default=0.0,
+                   help="상체 조준을 위로 올릴 배수 (머리와 같은 방향, 음수면 아래로)")
+    p.add_argument("--body-spread-ratio", type=float, default=0.15,
+                   help="부위 간 최소 조준 간격 배수. 머리가 위 리밋에 붙으면 "
+                        "이 간격만큼 상체를 아래로 밀어내므로, 크게 잡으면 "
+                        "근거리에서 상체 조준이 가슴보다 내려간다 (실측 92cm "
+                        "마운트·1m에서 0.3이면 126cm, 0.15면 132cm)")
+    p.add_argument("--body-tilt-rate", type=float, default=11.0,
+                   help="틸트 순항 속도 (도/s, 실측) — 슬롯의 이동 시간 산정용")
+    # 미세 움직임 둔감화 (실기 2026-08-27: 작은 흔들림에 순찰이 자주 끊김).
+    # 시나리오 자체 이동 감지는 게이트(--body-exit-deg)보다 위에 둬야 게이트가
+    # 1차 판정자가 된다 — 낮으면 recenter가 먼저 걸려 폴백이 안 나온다.
+    p.add_argument("--body-move-thr", type=float, default=20.0,
+                   help="시나리오 재조준 트리거 가슴 오차 (° — 게이트보다 크게)")
+    p.add_argument("--body-rescan-thr", type=float, default=30.0,
+                   help="재조준 후 전신 재스캔 판정 이동량 (°)")
     p.add_argument("--body-deadzone-pan", type=float, default=1.0,
                    help="팬 데드존 (° — 포즈 잡음이 모터로 새는 것 차단)")
-    # 틸트는 좁게 — 명령이 현재각 + gain x 오차라 데드존/gain 만큼 못 미친 채
-    # 선다. 1.0 이면 5°, 0.25 면 1.25° (이전 순찰의 수렴용 데드존과 같은 값).
-    p.add_argument("--body-deadzone-tilt", type=float, default=0.25,
+    p.add_argument("--body-deadzone-tilt", type=float, default=1.0,
                    help="틸트 데드존 (°)")
+    p.add_argument("--body-converge", type=float, default=2.5,
+                   help="수렴 판정 오차 (° — 순찰 도착·재조준·탐색 공용)")
+    p.add_argument("--body-map-timeout", type=float, default=1.5,
+                   help="매핑에서 부위가 안 보일 때 추정으로 넘어가는 시간 (s)")
     # ── 카메라 백엔드 (app/camera.py와 동일) ────────────────────────────────
     p.add_argument("--opencv", action="store_true")
     p.add_argument("--no-rpicam", dest="rpicam", action="store_false",
@@ -443,17 +480,20 @@ def main() -> None:
     if args.rotate_lead <= 0:
         print("[ERROR] --rotate-lead는 0보다 커야 합니다")
         sys.exit(1)
-    if (args.body_dwell <= 0 or args.body_arrive <= 0 or args.body_travel_max <= 0
-            or args.body_lost_s <= 0
-            or args.body_deadzone_pan <= 0 or args.body_deadzone_tilt <= 0):
+    if (args.body_dwell <= 0 or args.body_exit_deg <= 0 or args.body_exit_window <= 0
+            or args.body_still_s <= 0 or args.body_still_deg <= 0
+            or args.body_spread_ratio < 0 or args.body_tilt_rate <= 0
+            or args.body_move_thr <= 0 or args.body_rescan_thr <= 0
+            or args.body_deadzone_pan <= 0 or args.body_deadzone_tilt <= 0
+
+            or args.body_converge <= 0 or args.body_map_timeout <= 0):
         print("[ERROR] --body-* 인자 범위가 잘못됐습니다 (help 참고)")
         sys.exit(1)
-    if args.gain_pan > 0 and args.body_arrive <= args.body_deadzone_pan / args.gain_pan:
-        # 데드존이 남기는 정지 오차가 도착 문턱보다 크면 도착이 안 돼
-        # 매 슬롯 --body-travel-max 를 다 기다린다.
-        print(f"[WARN] --body-arrive({args.body_arrive:g}°)가 팬 정지 오차 "
-              f"({args.body_deadzone_pan / args.gain_pan:.1f}°) 이하 — 부위마다 "
-              f"--body-travel-max 만큼 늦게 넘어갑니다.")
+    if args.body_move_thr <= args.body_exit_deg:
+        # 시나리오 recenter가 먼저 걸리면 게이트 창이 비워져 폴백이 안 나온다.
+        print(f"[WARN] --body-move-thr({args.body_move_thr:g}°)가 "
+              f"--body-exit-deg({args.body_exit_deg:g}°) 이하 — 재조준이 먼저 걸려 "
+              "추적 폴백이 잘 안 나올 수 있습니다.")
 
     # 하드웨어를 열기 전에 신호 처리를 걸어둔다 — 이후 어느 시점에 끊겨도
     # finally/__exit__가 돌아 릴레이가 열린다 (docstring 9).
